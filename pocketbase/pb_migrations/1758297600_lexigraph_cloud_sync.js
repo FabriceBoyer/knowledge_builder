@@ -24,7 +24,7 @@ migrate((app) => {
     listRule: '@request.auth.id != "" && owner = @request.auth.id',
     viewRule: '@request.auth.id != "" && owner = @request.auth.id',
     createRule: '@request.auth.id != "" && @request.body.owner = @request.auth.id',
-    updateRule: '@request.auth.id != "" && owner = @request.auth.id && @request.body.owner:changed = false',
+    updateRule: '@request.auth.id != "" && owner = @request.auth.id && @request.body.owner = @request.auth.id',
     deleteRule: '@request.auth.id != "" && owner = @request.auth.id',
     fields: [
       { name: 'owner', type: 'relation', required: true, maxSelect: 1, collectionId: users.id, cascadeDelete: true },

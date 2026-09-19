@@ -17,9 +17,20 @@ export function initialWorkspace(): WorkspaceState {
   return { senses: [], graphs: [graph], activeGraphId: graph.id }
 }
 
-export function loadWorkspaceSnapshot(): LocalWorkspaceSnapshot {
+function scopedKey(ownerId: string) {
+  return `${STORAGE_KEY}:${ownerId}`
+}
+
+export function loadWorkspaceSnapshot(ownerId: string): LocalWorkspaceSnapshot {
   try {
-    const value = localStorage.getItem(STORAGE_KEY)
+    let value = localStorage.getItem(scopedKey(ownerId))
+    if (!value) {
+      value = localStorage.getItem(STORAGE_KEY)
+      if (value) {
+        localStorage.setItem(scopedKey(ownerId), value)
+        localStorage.removeItem(STORAGE_KEY)
+      }
+    }
     if (!value) return { data: initialWorkspace(), updatedAt: new Date().toISOString() }
     const parsed = JSON.parse(value) as WorkspaceState | LocalWorkspaceSnapshot
     if ('data' in parsed && parsed.data.graphs?.length) return parsed
@@ -30,7 +41,7 @@ export function loadWorkspaceSnapshot(): LocalWorkspaceSnapshot {
   }
 }
 
-export function saveWorkspace(state: WorkspaceState, updatedAt = new Date().toISOString()) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({ data: state, updatedAt }))
+export function saveWorkspace(ownerId: string, state: WorkspaceState, updatedAt = new Date().toISOString()) {
+  localStorage.setItem(scopedKey(ownerId), JSON.stringify({ data: state, updatedAt }))
   return updatedAt
 }

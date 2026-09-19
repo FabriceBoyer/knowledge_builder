@@ -10,6 +10,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
+    "test:pocketbase": "node scripts/smoke-pocketbase.mjs",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {

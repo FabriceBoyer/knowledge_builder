@@ -2,7 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { HashRouter } from 'react-router-dom'
 import App from './App'
-import { WorkspaceProvider } from './context/WorkspaceContext'
+import { AuthProvider } from './context/AuthContext'
 import './styles.css'
 
-createRoot(document.getElementById('root')!).render(<StrictMode><HashRouter><WorkspaceProvider><App /></WorkspaceProvider></HashRouter></StrictMode>)
+createRoot(document.getElementById('root')!).render(<StrictMode><HashRouter><AuthProvider><App /></AuthProvider></HashRouter></StrictMode>)

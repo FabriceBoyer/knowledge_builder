@@ -1,0 +1,63 @@
+import { ArrowRight, Cloud, LockKeyhole, Network, ShieldCheck } from 'lucide-react'
+import { useState, type FormEvent } from 'react'
+import { useAuth } from '../context/AuthContext'
+
+function readableError(error: unknown, mode: 'login' | 'register') {
+  const fallback = mode === 'login' ? 'Invalid email or password.' : 'The account could not be created. Check the fields and try again.'
+  if (!(error instanceof Error)) return fallback
+  if (/failed to fetch|network|load failed/i.test(error.message)) return 'PocketBase is unreachable. Check your connection and try again.'
+  return fallback
+}
+
+export function AuthPage() {
+  const { login, register } = useAuth()
+  const [mode, setMode] = useState<'login' | 'register'>('login')
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    setError('')
+    if (password.length < 8) return setError('Use at least 8 characters for your password.')
+    setSubmitting(true)
+    try {
+      if (mode === 'login') await login(email, password)
+      else await register(name, email, password)
+    } catch (reason) {
+      setError(readableError(reason, mode))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  function switchMode(next: 'login' | 'register') {
+    setMode(next); setError(''); setPassword('')
+  }
+
+  return <main className="auth-page">
+    <section className="auth-story">
+      <div className="brand auth-brand"><span className="brand-mark"><span /><span /><span /></span><span>lexi<strong>graph</strong></span></div>
+      <div className="auth-story-copy"><div className="eyebrow"><Network size={14} /> A workspace for precise thought</div><h1>Your ideas,<br /><span>connected.</span></h1><p>Disambiguate language, compose meaning, and turn scientific reading into durable knowledge graphs.</p></div>
+      <div className="auth-assurances"><span><Cloud /> PocketBase cloud sync</span><span><ShieldCheck /> Owner-only workspace</span></div>
+      <div className="auth-network" aria-hidden="true"><i /><i /><i /><i /><svg viewBox="0 0 500 300"><path d="M50 210 C140 150 160 80 250 120S390 220 455 90"/><path d="M50 210 C170 270 290 260 455 90"/></svg></div>
+    </section>
+    <section className="auth-form-side">
+      <div className="auth-card">
+        <div className="auth-lock"><LockKeyhole /></div>
+        <div className="auth-tabs" role="tablist"><button className={mode === 'login' ? 'active' : ''} onClick={() => switchMode('login')}>Sign in</button><button className={mode === 'register' ? 'active' : ''} onClick={() => switchMode('register')}>Create account</button></div>
+        <div className="auth-heading"><h2>{mode === 'login' ? 'Welcome back' : 'Create your workspace'}</h2><p>{mode === 'login' ? 'Continue building your semantic maps.' : 'Your private graph workspace will sync automatically.'}</p></div>
+        <form onSubmit={submit}>
+          {mode === 'register' && <label>Display name<input value={name} onChange={(event) => setName(event.target.value)} required autoComplete="name" placeholder="Ada Lovelace" /></label>}
+          <label>Email address<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoComplete="email" placeholder="you@example.com" /></label>
+          <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} required minLength={8} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} placeholder="At least 8 characters" /></label>
+          {error && <div className="auth-error" role="alert">{error}</div>}
+          <button className="primary-button auth-submit" disabled={submitting}>{submitting ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'} <ArrowRight size={17} /></button>
+        </form>
+        <p className="auth-note">Your password is handled by PocketBase and is never stored in the Lexigraph workspace.</p>
+      </div>
+    </section>
+  </main>
+}

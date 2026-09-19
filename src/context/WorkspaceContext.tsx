@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { initializeCloud, isConnectivityError, pushWorkspace, type CloudSyncStatus } from '../lib/pocketbase'
 import { initialWorkspace, loadWorkspaceSnapshot, saveWorkspace } from '../lib/storage'
 import type { ArticleDocument, GraphDocument, Sense, WorkspaceState } from '../types'
+import { useAuth } from './AuthContext'
 
 interface WorkspaceApi {
   state: WorkspaceState
@@ -19,7 +20,10 @@ interface WorkspaceApi {
 const WorkspaceContext = createContext<WorkspaceApi | null>(null)
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
-  const initial = useRef(loadWorkspaceSnapshot()).current
+  const { user } = useAuth()
+  if (!user) throw new Error('WorkspaceProvider requires an authenticated user.')
+  const ownerId = user.id
+  const initial = useRef(loadWorkspaceSnapshot(ownerId)).current
   const [state, setState] = useState(initial.data)
   const [cloudStatus, setCloudStatus] = useState<CloudSyncStatus>('connecting')
   const updatedAt = useRef(initial.updatedAt)
@@ -34,7 +38,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         if (remote) {
           applyingRemote.current = true
           updatedAt.current = remote.updatedAt
-          saveWorkspace(remote.data, remote.updatedAt)
+          saveWorkspace(ownerId, remote.data, remote.updatedAt)
           setState(remote.data)
         }
         setCloudStatus('synced')
@@ -46,14 +50,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       })
       .finally(() => { hydrated.current = true })
     return () => { active = false }
-  }, [initial])
+  }, [initial, ownerId])
 
   useEffect(() => {
     if (applyingRemote.current) {
       applyingRemote.current = false
       return
     }
-    updatedAt.current = saveWorkspace(state)
+    updatedAt.current = saveWorkspace(ownerId, state)
     if (!hydrated.current) return
     setCloudStatus('saving')
     const timeout = window.setTimeout(() => {
@@ -65,7 +69,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         })
     }, 700)
     return () => window.clearTimeout(timeout)
-  }, [state])
+  }, [state, ownerId])
 
   const addSense = useCallback((sense: Sense) => setState((current) => {
     if (current.senses.some((item) => item.wordId === sense.wordId)) return current

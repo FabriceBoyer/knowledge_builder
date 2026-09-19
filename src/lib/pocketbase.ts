@@ -2,14 +2,8 @@ import PocketBase, { ClientResponseError, type RecordModel } from 'pocketbase'
 import type { WorkspaceState } from '../types'
 
 export const POCKETBASE_URL = import.meta.env.VITE_POCKETBASE_URL || 'https://pocketbase.knowledge.ovh'
-const CREDENTIALS_KEY = 'lexigraph-pocketbase-guest-v1'
 const AUTH_COLLECTION = 'lexigraph_users'
 const COLLECTION = 'lexigraph_workspaces'
-
-interface GuestCredentials {
-  email: string
-  password: string
-}
 
 interface WorkspaceRecord extends RecordModel {
   owner: string
@@ -30,60 +24,59 @@ pb.autoCancellation(false)
 let workspaceRecordId = ''
 let initialization: Promise<WorkspaceSnapshot | null> | null = null
 
-function randomSecret() {
-  const values = crypto.getRandomValues(new Uint8Array(32))
-  return btoa(String.fromCharCode(...values)).replace(/[^a-zA-Z0-9]/g, '').slice(0, 32)
+export interface AuthUser {
+  id: string
+  email: string
+  name: string
 }
 
-function loadCredentials(): GuestCredentials | null {
+function resetSyncState() {
+  workspaceRecordId = ''
+  initialization = null
+}
+
+export function getAuthUser(): AuthUser | null {
+  const record = pb.authStore.record
+  if (!pb.authStore.isValid || !record) return null
+  return { id: record.id, email: String(record.email ?? ''), name: String(record.name ?? '') }
+}
+
+export async function restoreAuth() {
+  if (!pb.authStore.isValid) return null
   try {
-    const value = localStorage.getItem(CREDENTIALS_KEY)
-    return value ? JSON.parse(value) : null
+    await pb.collection(AUTH_COLLECTION).authRefresh()
+    resetSyncState()
+    return getAuthUser()
   } catch {
+    pb.authStore.clear()
     return null
   }
 }
 
-function createCredentials(): GuestCredentials {
-  const id = crypto.randomUUID()
-  const credentials = { email: `lexigraph-${id}@guest.invalid`, password: randomSecret() }
-  localStorage.setItem(CREDENTIALS_KEY, JSON.stringify(credentials))
-  return credentials
+export async function login(email: string, password: string) {
+  await pb.collection(AUTH_COLLECTION).authWithPassword(email.trim().toLowerCase(), password)
+  resetSyncState()
+  return getAuthUser()
 }
 
-async function authenticate() {
-  if (pb.authStore.isValid) {
-    try {
-      await pb.collection(AUTH_COLLECTION).authRefresh()
-      return
-    } catch {
-      pb.authStore.clear()
-    }
-  }
-
-  let credentials = loadCredentials()
-  if (credentials) {
-    try {
-      await pb.collection(AUTH_COLLECTION).authWithPassword(credentials.email, credentials.password)
-      return
-    } catch (error) {
-      if (!(error instanceof ClientResponseError) || error.status !== 400) throw error
-    }
-  }
-
-  credentials = createCredentials()
+export async function register(name: string, email: string, password: string) {
   await pb.collection(AUTH_COLLECTION).create({
-    email: credentials.email,
-    password: credentials.password,
-    passwordConfirm: credentials.password,
-    name: 'Lexigraph guest',
+    email: email.trim().toLowerCase(),
+    password,
+    passwordConfirm: password,
+    name: name.trim(),
   })
-  await pb.collection(AUTH_COLLECTION).authWithPassword(credentials.email, credentials.password)
+  return login(email, password)
+}
+
+export function logout() {
+  pb.authStore.clear()
+  resetSyncState()
 }
 
 async function getRemoteRecord(): Promise<WorkspaceRecord | null> {
   try {
-    const result = await pb.collection(COLLECTION).getList<WorkspaceRecord>(1, 1, { sort: '-updated' })
+    const result = await pb.collection(COLLECTION).getList<WorkspaceRecord>(1, 1)
     const record = result.items[0] ?? null
     workspaceRecordId = record?.id ?? ''
     return record
@@ -94,7 +87,7 @@ async function getRemoteRecord(): Promise<WorkspaceRecord | null> {
 }
 
 async function initializeCloudOnce(local: WorkspaceSnapshot): Promise<WorkspaceSnapshot | null> {
-  await authenticate()
+  if (!pb.authStore.isValid) throw new Error('Authentication is required before workspace synchronization.')
   const remote = await getRemoteRecord()
   if (!remote) {
     await pushWorkspace(local)
@@ -116,7 +109,7 @@ export function initializeCloud(local: WorkspaceSnapshot): Promise<WorkspaceSnap
 }
 
 export async function pushWorkspace(snapshot: WorkspaceSnapshot) {
-  if (!pb.authStore.isValid) await authenticate()
+  if (!pb.authStore.isValid) throw new Error('Authentication is required before workspace synchronization.')
   const owner = pb.authStore.record?.id
   if (!owner) throw new Error('PocketBase authentication did not return a user.')
   const payload = {

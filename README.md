@@ -13,7 +13,7 @@ The application is built with React, TypeScript, Vite, and React Flow. It requir
 - Provides editable, draggable concept graphs. Edges are labelled with a separately selected WordNet sense.
 - Loads English Wikipedia pages through the public MediaWiki API, including a curated set of reproducible scientific topics.
 - Maps selected article words or phrases to WordNet senses and carries them into the graph palette.
-- Immediately persists senses, graph topology, node positions, and article annotations in browser `localStorage`, then synchronizes them to PocketBase in the background.
+- Requires a PocketBase account, immediately persists senses, graph topology, node positions, and article annotations in account-scoped browser `localStorage`, then synchronizes them to PocketBase in the background.
 - Follows the operating-system light/dark preference on first visit and allows a manual override.
 
 ## Local development
@@ -77,7 +77,7 @@ In the GitHub repository, enable **Settings → Pages → Build and deployment �
 
 The storage key is `lexigraph-workspace-v1`. Local persistence is always the first write, so editing remains safe if PocketBase is unavailable. The application then synchronizes the latest snapshot to `https://pocketbase.knowledge.ovh` (override with `VITE_POCKETBASE_URL`).
 
-On first use, the browser creates a random guest identity and keeps its credentials locally. PocketBase record rules restrict every workspace operation to that authenticated identity, and the owner field has a unique index: users cannot list or read each other's data and each identity has exactly one workspace. No administrator credential or application secret is shipped to the frontend. Clearing all site storage also removes the guest credentials, so the existing cloud copy can no longer be recovered from that browser.
+Authentication is mandatory. Users create an account or sign in through the dedicated Lexigraph auth collection; PocketBase retains the session token while passwords are never stored in workspace data. Local snapshots are namespaced by authenticated user ID, preventing data leakage when multiple accounts share a browser. PocketBase record rules restrict every workspace operation to the authenticated owner, and the owner field has a unique index: users cannot list or read each other's data and each account has exactly one workspace. No administrator credential or application secret is shipped to the frontend.
 
 ### PocketBase collections
 
@@ -89,10 +89,18 @@ The reproducible migration is in `pocketbase/pb_migrations/1758297600_lexigraph_
 
 It creates:
 
-- `lexigraph_users`, a dedicated auth collection allowing guest registration and password authentication while preventing public listing or viewing;
+- `lexigraph_users`, a dedicated auth collection allowing account registration and password authentication while preventing public listing or viewing;
 - `lexigraph_workspaces`, with an owner relation, JSON data, client timestamp, schema version, a unique owner index, and owner-only CRUD rules.
 
 The cloud icon in the application header shows the current state: green means synchronized, rotating means connecting or saving, and coral means the application is safely working locally while the remote service is unavailable.
+
+Run the disposable end-to-end check against the configured instance with:
+
+```bash
+node scripts/smoke-pocketbase.mjs
+```
+
+It verifies anonymous-write rejection, registration, authentication, owner-scoped workspace create/read/update, and finally removes the temporary account (the related workspace is cascade-deleted).
 
 ## Project structure
 
