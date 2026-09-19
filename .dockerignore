@@ -1,0 +1,6 @@
+node_modules
+dist
+.git
+.github
+public/wordnet
+npm-debug.log

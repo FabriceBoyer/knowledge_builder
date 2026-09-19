@@ -1,0 +1,15 @@
+import { BookOpen, GitFork, HardDrive, HelpCircle, Search, ShieldCheck } from 'lucide-react'
+import { useWorkspace } from '../context/WorkspaceContext'
+
+export function HelpPage() {
+  const { clearWorkspace } = useWorkspace()
+  return <div className="page-container help-page">
+    <section className="page-heading"><div className="eyebrow"><HelpCircle size={14} /> Guide</div><h1>How to use Lexigraph</h1><p>From an ambiguous word to a precise, editable model of an idea.</p></section>
+    <div className="help-layout"><nav><a href="#senses">1. Collect senses</a><a href="#graphs">2. Compose concepts</a><a href="#articles">3. Map an article</a><a href="#storage">4. Your data</a></nav><div className="help-content">
+      <section id="senses"><div className="help-icon"><Search /></div><div><span>STEP ONE</span><h2>Collect exact meanings</h2><p>Open <strong>Sense lab</strong> and begin typing. You can only choose words present in WordNet. Select the intended sense using its definition and example sentence. Each synset receives a stable ID based on its WordNet offset; each word inside it receives its own ID.</p><div className="callout">Hover a collected sense at any time to see its definition again.</div></div></section>
+      <section id="graphs"><div className="help-icon"><GitFork /></div><div><span>STEP TWO</span><h2>Compose higher-order concepts</h2><p>Open <strong>Concept graph</strong>. Click a palette item to place it, drag nodes freely, and drag from one node handle to another. Every edge asks for a WordNet sense to serve as semantic glue. Select nodes or edges and press Delete to remove them.</p></div></section>
+      <section id="articles"><div className="help-icon"><BookOpen /></div><div><span>STEP THREE</span><h2>Decode an article</h2><p>Paste an English Wikipedia URL or select a suggested scientific topic. Highlight any word or phrase in the article, then map the passage to a precise WordNet sense. Mapped meanings join your palette, ready for one or several graphs.</p></div></section>
+      <section id="storage"><div className="help-icon"><HardDrive /></div><div><span>LOCAL FIRST</span><h2>Your work stays with you</h2><p>Every sense, graph position, relationship, and article annotation is automatically stored in this browser’s local storage. Refreshing or closing the tab will not erase the workspace.</p><div className="privacy"><ShieldCheck /><span><strong>No account. No server.</strong><br />Clearing browser data will remove your workspace.</span></div><button className="danger-button" onClick={() => window.confirm('Erase the entire local Lexigraph workspace?') && clearWorkspace()}>Reset local workspace</button></div></section>
+    </div></div>
+  </div>
+}
