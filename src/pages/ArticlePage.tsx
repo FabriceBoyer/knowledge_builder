@@ -1,5 +1,5 @@
 import { BookOpen, ExternalLink, FlaskConical, Highlighter, Link as LinkIcon, Network, Search, X } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { SenseSearch } from '../components/SenseSearch'
 import { useWorkspace } from '../context/WorkspaceContext'
@@ -24,7 +24,7 @@ export function ArticlePage() {
     finally { setLoading(false) }
   }
 
-  function captureSelection() {
+  const captureSelection = useCallback(() => {
     const selected = window.getSelection()
     if (!selected || selected.isCollapsed || !articleRef.current || !selected.rangeCount) return
     const range = selected.getRangeAt(0)
@@ -35,7 +35,12 @@ export function ArticlePage() {
     const start = before.toString().length
     const text = selected.toString().replace(/\s+/g, ' ').trim()
     if (text) setSelection({ text, start, end: start + selected.toString().length })
-  }
+  }, [])
+
+  useEffect(() => {
+    document.addEventListener('selectionchange', captureSelection)
+    return () => document.removeEventListener('selectionchange', captureSelection)
+  }, [captureSelection])
 
   function annotate(sense: Sense) {
     if (!article || !selection) return
@@ -83,8 +88,8 @@ export function ArticlePage() {
     </aside>
     <article className="wikipedia-paper">
       <header><div><span>FROM WIKIPEDIA</span><h2>{article.title}</h2></div><span className="selection-tip">Select any word or phrase to map it</span></header>
-      <div className="article-text" ref={articleRef} onMouseUp={captureSelection}>{content}</div>
+      <div className="article-text" ref={articleRef} onMouseUp={captureSelection} onTouchEnd={() => window.setTimeout(captureSelection, 0)}>{content}</div>
     </article>
-    {selection && <div className="selection-panel"><div className="selection-panel-header"><div><div className="eyebrow">Selected passage</div><q>{selection.text}</q></div><button className="icon-button" onClick={() => setSelection(null)}><X size={17} /></button></div><p>Choose the WordNet sense represented by this passage. Search is restricted to WordNet entries.</p><SenseSearch initialQuery={selection.text.toLowerCase()} onSelect={annotate} placeholder="Find its WordNet meaning…" /></div>}
+    {selection && <div className="selection-panel" role="dialog" aria-label="Map selected passage"><div className="selection-panel-header"><div><div className="eyebrow">Selected passage</div><q>{selection.text}</q></div><button className="icon-button" onClick={() => setSelection(null)} aria-label="Close selected passage"><X size={17} /></button></div><p>Choose the WordNet sense represented by this passage. Search is restricted to WordNet entries.</p><SenseSearch initialQuery={selection.text.toLowerCase()} onSelect={annotate} placeholder="Find its WordNet meaning…" /></div>}
   </div>
 }
