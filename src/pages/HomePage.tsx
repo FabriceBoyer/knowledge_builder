@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { useWorkspace } from '../context/WorkspaceContext'
 
 export function HomePage() {
-  const { state } = useWorkspace()
+  const { state, cloudStatus } = useWorkspace()
   return <div className="home-page">
     <section className="hero">
       <div className="hero-copy">
@@ -14,7 +14,7 @@ export function HomePage() {
           <Link className="primary-button" to="/words">Start with a word <ArrowRight size={18} /></Link>
           <Link className="secondary-button" to="/article">Map an article</Link>
         </div>
-        <div className="workspace-status"><span className="pulse" /> Auto-saved locally · {state.senses.length} senses · {state.graphs.length} graphs</div>
+        <div className="workspace-status"><span className="pulse" /> Auto-saved locally{cloudStatus === 'synced' ? ' and to PocketBase' : ''} · {state.senses.length} senses · {state.graphs.length} graphs</div>
       </div>
       <div className="hero-visual" aria-hidden="true">
         <div className="orbit orbit-one" /><div className="orbit orbit-two" />

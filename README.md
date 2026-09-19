@@ -13,7 +13,7 @@ The application is built with React, TypeScript, Vite, and React Flow. It requir
 - Provides editable, draggable concept graphs. Edges are labelled with a separately selected WordNet sense.
 - Loads English Wikipedia pages through the public MediaWiki API, including a curated set of reproducible scientific topics.
 - Maps selected article words or phrases to WordNet senses and carries them into the graph palette.
-- Automatically persists senses, graph topology, node positions, and article annotations in browser `localStorage`.
+- Immediately persists senses, graph topology, node positions, and article annotations in browser `localStorage`, then synchronizes them to PocketBase in the background.
 - Follows the operating-system light/dark preference on first visit and allows a manual override.
 
 ## Local development
@@ -75,7 +75,24 @@ In the GitHub repository, enable **Settings → Pages → Build and deployment �
 
 ## Data and privacy
 
-The storage key is `lexigraph-workspace-v1`. No analytics, account, cookie, or remote database is used. Work survives reloads, but is specific to the browser profile and will be lost if the site's storage is cleared. The Help page provides an explicit workspace reset.
+The storage key is `lexigraph-workspace-v1`. Local persistence is always the first write, so editing remains safe if PocketBase is unavailable. The application then synchronizes the latest snapshot to `https://pocketbase.knowledge.ovh` (override with `VITE_POCKETBASE_URL`).
+
+On first use, the browser creates a random guest identity and keeps its credentials locally. PocketBase record rules restrict every workspace operation to that authenticated identity, and the owner field has a unique index: users cannot list or read each other's data and each identity has exactly one workspace. No administrator credential or application secret is shipped to the frontend. Clearing all site storage also removes the guest credentials, so the existing cloud copy can no longer be recovered from that browser.
+
+### PocketBase collections
+
+The reproducible migration is in `pocketbase/pb_migrations/1758297600_lexigraph_cloud_sync.js`. Apply it from the PocketBase host with:
+
+```bash
+./pocketbase migrate up
+```
+
+It creates:
+
+- `lexigraph_users`, a dedicated auth collection allowing guest registration and password authentication while preventing public listing or viewing;
+- `lexigraph_workspaces`, with an owner relation, JSON data, client timestamp, schema version, a unique owner index, and owner-only CRUD rules.
+
+The cloud icon in the application header shows the current state: green means synchronized, rotating means connecting or saving, and coral means the application is safely working locally while the remote service is unavailable.
 
 ## Project structure
 

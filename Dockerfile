@@ -1,5 +1,7 @@
 FROM node:22-alpine AS build
 WORKDIR /app
+ARG VITE_POCKETBASE_URL=https://pocketbase.knowledge.ovh
+ENV VITE_POCKETBASE_URL=$VITE_POCKETBASE_URL
 COPY package*.json ./
 RUN npm ci
 COPY . .

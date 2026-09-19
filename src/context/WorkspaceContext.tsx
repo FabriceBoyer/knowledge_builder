@@ -1,5 +1,6 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { initialWorkspace, loadWorkspace, saveWorkspace } from '../lib/storage'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { initializeCloud, isConnectivityError, pushWorkspace, type CloudSyncStatus } from '../lib/pocketbase'
+import { initialWorkspace, loadWorkspaceSnapshot, saveWorkspace } from '../lib/storage'
 import type { ArticleDocument, GraphDocument, Sense, WorkspaceState } from '../types'
 
 interface WorkspaceApi {
@@ -12,15 +13,58 @@ interface WorkspaceApi {
   updateGraph: (graph: GraphDocument) => void
   setArticle: (article: ArticleDocument) => void
   clearWorkspace: () => void
+  cloudStatus: CloudSyncStatus
 }
 
 const WorkspaceContext = createContext<WorkspaceApi | null>(null)
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState(loadWorkspace)
+  const initial = useRef(loadWorkspaceSnapshot()).current
+  const [state, setState] = useState(initial.data)
+  const [cloudStatus, setCloudStatus] = useState<CloudSyncStatus>('connecting')
+  const updatedAt = useRef(initial.updatedAt)
+  const hydrated = useRef(false)
+  const applyingRemote = useRef(false)
 
   useEffect(() => {
-    saveWorkspace(state)
+    let active = true
+    initializeCloud({ data: initial.data, updatedAt: initial.updatedAt })
+      .then((remote) => {
+        if (!active) return
+        if (remote) {
+          applyingRemote.current = true
+          updatedAt.current = remote.updatedAt
+          saveWorkspace(remote.data, remote.updatedAt)
+          setState(remote.data)
+        }
+        setCloudStatus('synced')
+      })
+      .catch((error) => {
+        if (!active) return
+        setCloudStatus(isConnectivityError(error) ? 'offline' : 'error')
+        console.warn('PocketBase sync unavailable; local persistence remains active.', error)
+      })
+      .finally(() => { hydrated.current = true })
+    return () => { active = false }
+  }, [initial])
+
+  useEffect(() => {
+    if (applyingRemote.current) {
+      applyingRemote.current = false
+      return
+    }
+    updatedAt.current = saveWorkspace(state)
+    if (!hydrated.current) return
+    setCloudStatus('saving')
+    const timeout = window.setTimeout(() => {
+      pushWorkspace({ data: state, updatedAt: updatedAt.current })
+        .then(() => setCloudStatus('synced'))
+        .catch((error) => {
+          setCloudStatus(isConnectivityError(error) ? 'offline' : 'error')
+          console.warn('PocketBase sync failed; changes remain saved locally.', error)
+        })
+    }, 700)
+    return () => window.clearTimeout(timeout)
   }, [state])
 
   const addSense = useCallback((sense: Sense) => setState((current) => {
@@ -53,7 +97,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const setArticle = useCallback((article: ArticleDocument) => setState((current) => ({ ...current, article })), [])
   const clearWorkspace = useCallback(() => setState(initialWorkspace()), [])
 
-  const value = useMemo(() => ({ state, addSense, removeSense, setState, createGraph, deleteGraph, updateGraph, setArticle, clearWorkspace }), [state, addSense, removeSense, createGraph, deleteGraph, updateGraph, setArticle, clearWorkspace])
+  const value = useMemo(() => ({ state, addSense, removeSense, setState, createGraph, deleteGraph, updateGraph, setArticle, clearWorkspace, cloudStatus }), [state, addSense, removeSense, createGraph, deleteGraph, updateGraph, setArticle, clearWorkspace, cloudStatus])
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>
 }
 
