@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createWorkspaceSync, isConnectivityError, type CloudSyncStatus, type WorkspaceSync } from '../lib/pocketbase'
-import { initialWorkspace, loadWorkspaceSnapshot, saveWorkspace } from '../lib/storage'
+import { initialWorkspace, loadWorkspaceSnapshot } from '../lib/storage'
 import type { ArticleDocument, GraphDocument, Sense, WorkspaceState } from '../types'
 import { useAuth } from './AuthContext'
 
@@ -26,7 +26,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const initial = useRef(loadWorkspaceSnapshot(ownerId)).current
   const [state, setState] = useState(initial.data)
   const [cloudStatus, setCloudStatus] = useState<CloudSyncStatus>('connecting')
-  const updatedAt = useRef(initial.updatedAt)
   const hydrated = useRef(false)
   const applyingRemote = useRef(false)
   const sync = useRef<WorkspaceSync | null>(null)
@@ -40,8 +39,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       onRemoteState: (remote) => {
         if (!active) return
         applyingRemote.current = true
-        updatedAt.current = remote.updatedAt
-        saveWorkspace(ownerId, remote.data, remote.updatedAt)
         setState(remote.data)
       },
     }).then((workspaceSync) => {
@@ -62,7 +59,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       applyingRemote.current = false
       return
     }
-    updatedAt.current = saveWorkspace(ownerId, state)
     if (!hydrated.current) return
     const timeout = window.setTimeout(() => sync.current?.publish(state), 250)
     return () => window.clearTimeout(timeout)

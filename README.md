@@ -13,7 +13,7 @@ The application is built with React, TypeScript, Vite, and React Flow. It requir
 - Provides interchangeable canvas and text-column concept editors. Entities can be replaced or deleted with their incident relations; relationships can be relabelled, reconnected, or removed explicitly.
 - Loads English Wikipedia pages through the public MediaWiki API, including a curated set of reproducible scientific topics.
 - Maps selected article words or phrases to WordNet senses and carries them into the graph palette.
-- Requires a verified PocketBase account (email/password or GitHub), immediately persists senses, graph topology, node positions, and article annotations in account-scoped browser `localStorage`, then synchronizes every device through a CRDT operation journal and PocketBase realtime events.
+- Requires a verified PocketBase account (email/password or GitHub), immediately persists senses, graph topology, node positions, and article annotations in account-scoped IndexedDB, then synchronizes every device through Automerge changes and PocketBase realtime events.
 - Follows the operating-system light/dark preference on first visit and allows a manual override.
 
 ## Local development
@@ -75,15 +75,15 @@ In the GitHub repository, enable **Settings → Pages → Build and deployment �
 
 ## Data and privacy
 
-The workspace snapshot uses `lexigraph-workspace-v1:<user-id>` and the durable CRDT replica uses `lexigraph-crdt-v1:<user-id>`. Local persistence is always the first write, so editing remains safe if PocketBase or the network is unavailable. The application synchronizes through `https://pocketbase.knowledge.ovh` (override with `VITE_POCKETBASE_URL`).
+The active local database is IndexedDB `lexigraph-cache`, object store `automerge-replicas`, keyed by the authenticated user ID. Each record contains the binary Automerge document and a durable queue of unsent binary changes. Local persistence happens before network delivery, so editing remains safe if PocketBase or the network is unavailable. The former `lexigraph-workspace-v1:<user-id>` snapshot and `lexigraph-crdt-v1:<user-id>` localStorage journal are read only as migration sources. The application synchronizes through `https://pocketbase.knowledge.ovh` (override with `VITE_POCKETBASE_URL`).
 
 ### Realtime and offline merge
 
-Lexigraph uses an operation-based last-write-wins element-map CRDT. The workspace is normalized into independently mergeable entries for senses, graph metadata, nodes, relations, the active graph, article metadata, and annotations. Every local mutation receives a hybrid timestamp plus a stable per-browser device ID, is applied locally immediately, and is appended to a durable queue before network access is attempted.
+Lexigraph uses `@automerge/automerge` as its CRDT. The workspace is normalized into independently mergeable entries for senses, graph metadata, nodes, relations, the active graph, article metadata, and annotations. Every local mutation produces a binary Automerge change, updates the IndexedDB replica immediately, and enters the durable upload queue before network access is attempted.
 
-When online, immutable operations are appended to PocketBase and delivered to other signed-in instances with its SSE realtime API. On startup and reconnection, each client fetches the complete owner-scoped journal before flushing queued operations, so events missed during an outage are recovered. Operations are idempotent through a unique `opId`; deterministic clock ordering and tombstones make every replica converge regardless of delivery order. Existing `lexigraph_workspaces` snapshots are used once to seed the journal, preserving data created before the CRDT migration.
+When online, immutable changes are appended to PocketBase and delivered to other signed-in instances with its SSE realtime API. On startup and reconnection, each client fetches the owner-scoped checkpoints and remaining changes before flushing queued changes, so events missed during an outage are recovered. Unique change IDs make uploads idempotent, while Automerge causal history merges concurrent edits without relying on arrival order. Existing snapshots and the former custom CRDT journal are imported once when no Automerge cloud state exists.
 
-The current append-only journal favors straightforward recovery and auditability. If operation volume grows substantially, the next scaling step is server-side checkpointing and garbage collection of operations dominated by a snapshot state vector.
+To keep replay bounded, a client creates a complete Automerge checkpoint after 100 cloud changes or roughly 512 KB of encoded change data. Only after PocketBase confirms that checkpoint does the client delete the exact change records it incorporated and older checkpoints it observed. Concurrent, newly-arrived changes are left untouched and merge into the checkpoint normally. Compaction is therefore safe to retry after interruption.
 
 Authentication and email ownership verification are mandatory. Password registrations receive a verification link before they can sign in; the sign-in page can resend it and offers a complete password-reset flow. GitHub OAuth accounts are accepted only when GitHub supplies a verified email. PocketBase retains the session token while passwords are never stored in workspace data. Local snapshots are namespaced by authenticated user ID, preventing data leakage when multiple accounts share a browser. PocketBase record rules restrict every workspace operation to the authenticated owner, and the owner field has a unique index: users cannot list or read each other's data and each account has exactly one workspace. No administrator credential or application secret is shipped to the frontend.
 
@@ -99,7 +99,10 @@ They create and configure:
 
 - `lexigraph_users`, a dedicated auth collection allowing registration and password authentication while preventing public listing or viewing and refusing authentication until `verified = true`;
 - `lexigraph_workspaces`, with an owner relation, JSON data, client timestamp, schema version, a unique owner index, and owner-only CRUD rules.
-- `lexigraph_sync_operations`, an immutable owner-only CRDT operation journal with unique operation IDs and an owner/clock index for realtime catch-up.
+- `lexigraph_automerge_changes`, immutable owner-only binary Automerge changes with unique change IDs for realtime catch-up;
+- `lexigraph_automerge_checkpoints`, owner-only full Automerge documents used to bound replay and safely compact incorporated changes.
+
+`lexigraph_workspaces` and `lexigraph_sync_operations` remain available only to migrate work created by older releases.
 
 Email verification and password-reset links return to `https://fabriceboyer.github.io/knowledge_builder/`. PocketBase SMTP must be enabled for password registration and recovery.
 
@@ -118,7 +121,7 @@ Run the disposable end-to-end check against the configured instance with:
 node scripts/smoke-pocketbase.mjs
 ```
 
-It verifies anonymous-write rejection, registration, authentication, owner-scoped workspace create/read/update, and finally removes the temporary account (the related workspace is cascade-deleted).
+It verifies anonymous-write rejection, registration, authentication, owner-scoped workspace create/read/update, and finally removes the temporary account (the related workspace is cascade-deleted). `scripts/smoke-realtime-sync.mjs` separately verifies realtime Automerge change delivery plus checkpoint create/restore/delete with two authenticated clients.
 
 ## Project structure
 

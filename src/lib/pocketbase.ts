@@ -1,12 +1,17 @@
 import PocketBase, { ClientResponseError, type RecordModel } from 'pocketbase'
 import type { WorkspaceState } from '../types'
-import { diffWorkspace, materializeWorkspace, mergeOperation, nextClock, type CrdtEntries, type CrdtOperation } from './crdt'
+import { materializeWorkspace, mergeOperation, type CrdtEntries, type CrdtOperation } from './crdt'
+import { applyDocumentChange, createWorkspaceDocument, documentHeads, lastLocalChange, loadDocument, materializeDocument, mergeDocuments, saveDocument, updateWorkspaceDocument, type WorkspaceDoc } from './automergeWorkspace'
+import { shouldCreateCheckpoint } from './compaction'
+import { loadAutomergeReplica, saveAutomergeReplica, type PendingAutomergeChange } from './indexeddb'
 
 export const POCKETBASE_URL = import.meta.env.VITE_POCKETBASE_URL || 'https://pocketbase.knowledge.ovh'
 const AUTH_COLLECTION = 'lexigraph_users'
 const COLLECTION = 'lexigraph_workspaces'
 const SYNC_COLLECTION = 'lexigraph_sync_operations'
 const REPLICA_KEY = 'lexigraph-crdt-v1'
+const AUTOMERGE_CHANGES = 'lexigraph_automerge_changes'
+const AUTOMERGE_CHECKPOINTS = 'lexigraph_automerge_checkpoints'
 
 interface WorkspaceRecord extends RecordModel {
   owner: string
@@ -26,6 +31,20 @@ interface ReplicaState {
   latestTimestamp: number
   entries: CrdtEntries
   pending: CrdtOperation[]
+}
+
+interface AutomergeChangeRecord extends RecordModel {
+  owner: string
+  changeId: string
+  payload: string
+}
+
+interface AutomergeCheckpointRecord extends RecordModel {
+  owner: string
+  checkpointId: string
+  document: string
+  heads: string[]
+  changeCount: number
 }
 
 export interface WorkspaceSnapshot {
@@ -187,24 +206,40 @@ export function isConnectivityError(error: unknown) {
   return error instanceof ClientResponseError && (error.status === 0 || error.isAbort)
 }
 
-function replicaStorageKey(ownerId: string) {
-  return `${REPLICA_KEY}:${ownerId}`
-}
-
-function loadReplica(ownerId: string): ReplicaState {
+function loadLegacyReplica(ownerId: string): ReplicaState | null {
   try {
-    const parsed = JSON.parse(localStorage.getItem(replicaStorageKey(ownerId)) ?? '') as ReplicaState
-    if (parsed.version === 1 && parsed.deviceId && parsed.entries && Array.isArray(parsed.pending)) return parsed
-  } catch { /* create a fresh replica */ }
-  return { version: 1, deviceId: crypto.randomUUID(), counter: 0, latestTimestamp: 0, entries: {}, pending: [] }
+    const parsed = JSON.parse(localStorage.getItem(`${REPLICA_KEY}:${ownerId}`) ?? '') as ReplicaState
+    if (parsed.version === 1 && parsed.entries) return parsed
+  } catch { /* legacy cache is optional */ }
+  return null
 }
 
-function saveReplica(ownerId: string, replica: ReplicaState) {
-  localStorage.setItem(replicaStorageKey(ownerId), JSON.stringify(replica))
+function bytesToBase64(bytes: Uint8Array) {
+  let binary = ''
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000))
+  return btoa(binary)
 }
 
-function operationFromRecord(record: SyncRecord): CrdtOperation {
-  return { opId: record.opId, deviceId: record.deviceId, clock: record.clock, entryKey: record.entryKey, deleted: record.deleted, value: record.value }
+function base64ToBytes(value: string) {
+  const binary = atob(value)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index)
+  return bytes
+}
+
+async function legacyWorkspace(ownerId: string, fallback: WorkspaceSnapshot) {
+  const legacy = loadLegacyReplica(ownerId)
+  const entries: CrdtEntries = legacy?.entries ? structuredClone(legacy.entries) : {}
+  try {
+    const records = await pb.collection(SYNC_COLLECTION).getFullList<SyncRecord>({ sort: 'clock' })
+    records.forEach((record) => mergeOperation(entries, { opId: record.opId, deviceId: record.deviceId, clock: record.clock, entryKey: record.entryKey, deleted: record.deleted, value: record.value }))
+  } catch (error) {
+    if (!isConnectivityError(error)) throw error
+  }
+  const migrated = materializeWorkspace(entries)
+  if (migrated) return migrated
+  const snapshot = await initializeCloud(fallback)
+  return snapshot?.data ?? fallback.data
 }
 
 export interface RealtimeSyncOptions {
@@ -221,9 +256,19 @@ export interface WorkspaceSync {
 
 export async function createWorkspaceSync({ ownerId, local, onRemoteState, onStatus }: RealtimeSyncOptions): Promise<WorkspaceSync> {
   if (!pb.authStore.isValid || pb.authStore.record?.id !== ownerId) throw new Error('Authentication is required before workspace synchronization.')
-  const replica = loadReplica(ownerId)
+  const stored = await loadAutomergeReplica(ownerId)
+  let workspaceDoc: WorkspaceDoc
+  let pending: PendingAutomergeChange[]
+  if (stored) {
+    workspaceDoc = loadDocument(stored.document)
+    pending = stored.pending
+  } else {
+    workspaceDoc = createWorkspaceDocument(local.data)
+    const initialChange = lastLocalChange(workspaceDoc)
+    pending = initialChange ? [{ changeId: crypto.randomUUID(), payload: bytesToBase64(initialChange) }] : []
+  }
   let stopped = false
-  let previousState: WorkspaceState | null = null
+  let previousState = materializeDocument(workspaceDoc) ?? local.data
   let flushing: Promise<void> | null = null
   let subscribed = false
   let subscriptionAttempt: Promise<void> | null = null
@@ -233,42 +278,37 @@ export async function createWorkspaceSync({ ownerId, local, onRemoteState, onSta
   let retryDelay = 2000
   let retryTimer: number | undefined
   let syncing: Promise<void> | null = null
+  let persistQueue = Promise.resolve()
 
-  const persist = () => saveReplica(ownerId, replica)
-  const makeOperation = (entryKey: string, deleted: boolean, value?: unknown): CrdtOperation => {
-    replica.counter += 1
-    const clock = nextClock(replica.deviceId, replica.counter, replica.latestTimestamp)
-    replica.latestTimestamp = Number(clock.split(':')[0])
-    return { opId: crypto.randomUUID(), deviceId: replica.deviceId, clock, entryKey, deleted, value }
-  }
-  const apply = (operation: CrdtOperation) => {
-    replica.latestTimestamp = Math.max(replica.latestTimestamp, Number(operation.clock.split(':')[0]) || 0)
-    return mergeOperation(replica.entries, operation)
+  const persist = () => {
+    const snapshot = { ownerId, document: saveDocument(workspaceDoc), pending: structuredClone(pending), updatedAt: new Date().toISOString() }
+    persistQueue = persistQueue.then(() => saveAutomergeReplica(snapshot)).catch((error) => console.warn('IndexedDB replica save failed.', error))
+    return persistQueue
   }
   const emitMaterialized = () => {
-    const state = materializeWorkspace(replica.entries)
+    const state = materializeDocument(workspaceDoc)
     if (!state) return
     previousState = structuredClone(state)
     onRemoteState({ data: state, updatedAt: new Date().toISOString() })
   }
-  const hasRemoteOperation = async (opId: string) => {
+  const hasRemoteChange = async (changeId: string) => {
     try {
-      await pb.collection(SYNC_COLLECTION).getFirstListItem(pb.filter('opId = {:opId}', { opId }))
+      await pb.collection(AUTOMERGE_CHANGES).getFirstListItem(pb.filter('changeId = {:changeId}', { changeId }))
       return true
     } catch { return false }
   }
   const flush = async () => {
     if (flushing) return flushing
     flushing = (async () => {
-      while (!stopped && replica.pending.length) {
-        const operation = replica.pending[0]
+      while (!stopped && pending.length) {
+        const change = pending[0]
         try {
-          await pb.collection(SYNC_COLLECTION).create({ owner: ownerId, ...operation, value: operation.value ?? null })
+          await pb.collection(AUTOMERGE_CHANGES).create({ owner: ownerId, ...change })
         } catch (error) {
-          if (!(error instanceof ClientResponseError && error.status === 400 && await hasRemoteOperation(operation.opId))) throw error
+          if (!(error instanceof ClientResponseError && error.status === 400 && await hasRemoteChange(change.changeId))) throw error
         }
-        replica.pending.shift()
-        persist()
+        pending.shift()
+        await persist()
       }
       if (!stopped) onStatus('synced')
     })().catch((error) => {
@@ -277,34 +317,61 @@ export async function createWorkspaceSync({ ownerId, local, onRemoteState, onSta
     }).finally(() => { flushing = null })
     return flushing
   }
+  const applyChangeRecord = (record: AutomergeChangeRecord) => {
+    const before = documentHeads(workspaceDoc).join(',')
+    workspaceDoc = applyDocumentChange(workspaceDoc, base64ToBytes(record.payload))
+    return before !== documentHeads(workspaceDoc).join(',')
+  }
+  const applyCheckpointRecord = (record: AutomergeCheckpointRecord) => {
+    const before = documentHeads(workspaceDoc).join(',')
+    workspaceDoc = mergeDocuments(workspaceDoc, loadDocument(base64ToBytes(record.document)))
+    return before !== documentHeads(workspaceDoc).join(',')
+  }
+  const compact = async (changes: AutomergeChangeRecord[], checkpoints: AutomergeCheckpointRecord[]) => {
+    const byteCount = changes.reduce((total, record) => total + record.payload.length, 0)
+    if (!shouldCreateCheckpoint(changes.length, byteCount, pending.length)) return
+    const checkpointId = crypto.randomUUID()
+    await pb.collection(AUTOMERGE_CHECKPOINTS).create({ owner: ownerId, checkpointId, document: bytesToBase64(saveDocument(workspaceDoc)), heads: documentHeads(workspaceDoc), changeCount: changes.length })
+    const removals = [...changes.map((record) => [AUTOMERGE_CHANGES, record.id] as const), ...checkpoints.map((record) => [AUTOMERGE_CHECKPOINTS, record.id] as const)]
+    for (const [collection, id] of removals) {
+      try { await pb.collection(collection).delete(id) } catch (error) { console.warn('Automerge compaction cleanup will be retried later.', error) }
+    }
+  }
   const pullRemote = async () => {
-    const records = await pb.collection(SYNC_COLLECTION).getFullList<SyncRecord>({ sort: 'clock' })
+    const [checkpoints, changes] = await Promise.all([
+      pb.collection(AUTOMERGE_CHECKPOINTS).getFullList<AutomergeCheckpointRecord>({ sort: 'checkpointId' }),
+      pb.collection(AUTOMERGE_CHANGES).getFullList<AutomergeChangeRecord>({ sort: 'changeId' }),
+    ])
     let changed = false
-    records.forEach((record) => { changed = apply(operationFromRecord(record)) || changed })
-    persist()
+    checkpoints.forEach((record) => { changed = applyCheckpointRecord(record) || changed })
+    changes.forEach((record) => { changed = applyChangeRecord(record) || changed })
+    await persist()
     if (changed) emitMaterialized()
-    return records.length
+    return { checkpoints, changes }
   }
   const publish = (state: WorkspaceState) => {
     if (stopped) return
     latestLocal = { data: state, updatedAt: new Date().toISOString() }
-    const operations = diffWorkspace(previousState, state, makeOperation)
+    const result = updateWorkspaceDocument(workspaceDoc, previousState, state)
     previousState = structuredClone(state)
-    if (!operations.length) return
-    operations.forEach((operation) => {
-      apply(operation)
-      replica.pending.push(operation)
-    })
-    persist()
+    if (!result.change) return
+    workspaceDoc = result.document
+    pending.push({ changeId: crypto.randomUUID(), payload: bytesToBase64(result.change) })
+    void persist()
     onStatus('saving')
     if (ready) void flush().catch((error) => {
       console.warn('PocketBase CRDT flush failed; operations remain queued.', error)
       scheduleRetry()
     })
   }
-  const receive = (record: SyncRecord) => {
-    if (stopped || !apply(operationFromRecord(record))) return
-    persist()
+  const receiveChange = (record: AutomergeChangeRecord) => {
+    if (stopped || !applyChangeRecord(record)) return
+    void persist()
+    emitMaterialized()
+  }
+  const receiveCheckpoint = (record: AutomergeCheckpointRecord) => {
+    if (stopped || !applyCheckpointRecord(record)) return
+    void persist()
     emitMaterialized()
   }
   const scheduleRetry = () => {
@@ -317,13 +384,14 @@ export async function createWorkspaceSync({ ownerId, local, onRemoteState, onSta
   }
   const startSubscription = () => {
     if (stopped || subscribed || subscriptionAttempt) return
-    subscriptionAttempt = pb.collection(SYNC_COLLECTION).subscribe<SyncRecord>('*', (event) => {
-        if (event.action === 'create' || event.action === 'update') receive(event.record)
-      })
+    subscriptionAttempt = Promise.all([
+      pb.collection(AUTOMERGE_CHANGES).subscribe<AutomergeChangeRecord>('*', (event) => { if (event.action === 'create') receiveChange(event.record) }),
+      pb.collection(AUTOMERGE_CHECKPOINTS).subscribe<AutomergeCheckpointRecord>('*', (event) => { if (event.action === 'create') receiveCheckpoint(event.record) }),
+    ]).then(() => undefined)
       .then(() => { subscribed = true })
       .catch(async (error) => {
         subscribed = false
-        try { await pb.collection(SYNC_COLLECTION).unsubscribe('*') } catch { /* retry will rebuild the subscription */ }
+        try { await Promise.all([pb.collection(AUTOMERGE_CHANGES).unsubscribe('*'), pb.collection(AUTOMERGE_CHECKPOINTS).unsubscribe('*')]) } catch { /* retry will rebuild subscriptions */ }
         if (!stopped) {
           console.warn('PocketBase realtime unavailable; periodic catch-up remains active.', error)
           scheduleRetry()
@@ -336,13 +404,13 @@ export async function createWorkspaceSync({ ownerId, local, onRemoteState, onSta
     onStatus('connecting')
     startSubscription()
     syncing = (async () => {
-      const remoteCount = await pullRemote()
-      if (!remoteCount && !migrationChecked) {
+      const remote = await pullRemote()
+      if (!remote.checkpoints.length && !remote.changes.length && !migrationChecked) {
         migrationChecked = true
-        const legacy = await initializeCloud(latestLocal)
-        if (legacy) publish(legacy.data)
+        publish(await legacyWorkspace(ownerId, latestLocal))
       }
       await flush()
+      await compact(remote.changes, remote.checkpoints)
       retryDelay = 2000
       if (retryTimer) window.clearTimeout(retryTimer)
       retryTimer = undefined
@@ -355,12 +423,8 @@ export async function createWorkspaceSync({ ownerId, local, onRemoteState, onSta
   const goOffline = () => { if (!stopped) onStatus('offline') }
   const resume = () => { if (!document.hidden) synchronize() }
 
-  if (!Object.keys(replica.entries).length) {
-    publish(local.data)
-  } else {
-    previousState = materializeWorkspace(replica.entries)
-    emitMaterialized()
-  }
+  await persist()
+  emitMaterialized()
   window.addEventListener('online', synchronize)
   window.addEventListener('offline', goOffline)
   window.addEventListener('focus', synchronize)
@@ -381,7 +445,7 @@ export async function createWorkspaceSync({ ownerId, local, onRemoteState, onSta
       document.removeEventListener('visibilitychange', resume)
       if (retryTimer) window.clearTimeout(retryTimer)
       window.clearInterval(catchUpTimer)
-      if (subscribed) void pb.collection(SYNC_COLLECTION).unsubscribe('*')
+      if (subscribed) void Promise.all([pb.collection(AUTOMERGE_CHANGES).unsubscribe('*'), pb.collection(AUTOMERGE_CHECKPOINTS).unsubscribe('*')])
     },
   }
 }
