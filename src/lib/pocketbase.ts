@@ -85,6 +85,14 @@ export async function confirmEmailVerification(token: string) {
   await pb.collection(AUTH_COLLECTION).confirmVerification(token)
 }
 
+export async function requestPasswordReset(email: string) {
+  await pb.collection(AUTH_COLLECTION).requestPasswordReset(email.trim().toLowerCase())
+}
+
+export async function confirmPasswordReset(token: string, password: string, passwordConfirm: string) {
+  await pb.collection(AUTH_COLLECTION).confirmPasswordReset(token, password, passwordConfirm)
+}
+
 export async function loginWithGitHub() {
   await pb.collection(AUTH_COLLECTION).authWithOAuth2({ provider: 'github' })
   resetSyncState()

@@ -24,6 +24,10 @@ migrate((app) => {
       subject: 'Verify your Lexigraph email',
       body: '<p>Hello,</p><p>Confirm your email address to activate your Lexigraph workspace.</p><p><a class="btn" href="https://fabriceboyer.github.io/knowledge_builder/?verification={TOKEN}" target="_blank" rel="noopener">Verify email</a></p><p>If you did not create this account, you can ignore this message.</p><p>Thanks,<br/>Lexigraph</p>',
     },
+    resetPasswordTemplate: {
+      subject: 'Reset your Lexigraph password',
+      body: '<p>Hello,</p><p>Use the button below to choose a new Lexigraph password.</p><p><a class="btn" href="https://fabriceboyer.github.io/knowledge_builder/?passwordReset={TOKEN}" target="_blank" rel="noopener">Reset password</a></p><p>If you did not request this, you can ignore this message.</p><p>Thanks,<br/>Lexigraph</p>',
+    },
     fields: [
       { name: 'name', type: 'text', max: 120 },
     ],

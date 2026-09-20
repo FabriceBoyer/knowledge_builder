@@ -77,7 +77,7 @@ In the GitHub repository, enable **Settings → Pages → Build and deployment �
 
 The storage key is `lexigraph-workspace-v1`. Local persistence is always the first write, so editing remains safe if PocketBase is unavailable. The application then synchronizes the latest snapshot to `https://pocketbase.knowledge.ovh` (override with `VITE_POCKETBASE_URL`).
 
-Authentication and email ownership verification are mandatory. Password registrations receive a verification link before they can sign in; the sign-in page can resend it. GitHub OAuth accounts are accepted only when GitHub supplies a verified email. PocketBase retains the session token while passwords are never stored in workspace data. Local snapshots are namespaced by authenticated user ID, preventing data leakage when multiple accounts share a browser. PocketBase record rules restrict every workspace operation to the authenticated owner, and the owner field has a unique index: users cannot list or read each other's data and each account has exactly one workspace. No administrator credential or application secret is shipped to the frontend.
+Authentication and email ownership verification are mandatory. Password registrations receive a verification link before they can sign in; the sign-in page can resend it and offers a complete password-reset flow. GitHub OAuth accounts are accepted only when GitHub supplies a verified email. PocketBase retains the session token while passwords are never stored in workspace data. Local snapshots are namespaced by authenticated user ID, preventing data leakage when multiple accounts share a browser. PocketBase record rules restrict every workspace operation to the authenticated owner, and the owner field has a unique index: users cannot list or read each other's data and each account has exactly one workspace. No administrator credential or application secret is shipped to the frontend.
 
 ### PocketBase collections
 
@@ -92,7 +92,7 @@ They create and configure:
 - `lexigraph_users`, a dedicated auth collection allowing registration and password authentication while preventing public listing or viewing and refusing authentication until `verified = true`;
 - `lexigraph_workspaces`, with an owner relation, JSON data, client timestamp, schema version, a unique owner index, and owner-only CRUD rules.
 
-Email verification links return to `https://fabriceboyer.github.io/knowledge_builder/`. PocketBase SMTP must be enabled for password registration.
+Email verification and password-reset links return to `https://fabriceboyer.github.io/knowledge_builder/`. PocketBase SMTP must be enabled for password registration and recovery.
 
 For GitHub login, create a GitHub OAuth App with:
 
