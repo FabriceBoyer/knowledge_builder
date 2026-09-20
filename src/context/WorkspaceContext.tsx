@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { initializeCloud, isConnectivityError, pushWorkspace, type CloudSyncStatus } from '../lib/pocketbase'
+import { createWorkspaceSync, isConnectivityError, type CloudSyncStatus, type WorkspaceSync } from '../lib/pocketbase'
 import { initialWorkspace, loadWorkspaceSnapshot, saveWorkspace } from '../lib/storage'
 import type { ArticleDocument, GraphDocument, Sense, WorkspaceState } from '../types'
 import { useAuth } from './AuthContext'
@@ -29,27 +29,32 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const updatedAt = useRef(initial.updatedAt)
   const hydrated = useRef(false)
   const applyingRemote = useRef(false)
+  const sync = useRef<WorkspaceSync | null>(null)
 
   useEffect(() => {
     let active = true
-    initializeCloud({ data: initial.data, updatedAt: initial.updatedAt })
-      .then((remote) => {
+    createWorkspaceSync({
+      ownerId,
+      local: { data: initial.data, updatedAt: initial.updatedAt },
+      onStatus: (status) => { if (active) setCloudStatus(status) },
+      onRemoteState: (remote) => {
         if (!active) return
-        if (remote) {
-          applyingRemote.current = true
-          updatedAt.current = remote.updatedAt
-          saveWorkspace(ownerId, remote.data, remote.updatedAt)
-          setState(remote.data)
-        }
-        setCloudStatus('synced')
+        applyingRemote.current = true
+        updatedAt.current = remote.updatedAt
+        saveWorkspace(ownerId, remote.data, remote.updatedAt)
+        setState(remote.data)
+      },
+    }).then((workspaceSync) => {
+        if (!active) return workspaceSync.stop()
+        sync.current = workspaceSync
+        hydrated.current = true
       })
       .catch((error) => {
         if (!active) return
         setCloudStatus(isConnectivityError(error) ? 'offline' : 'error')
         console.warn('PocketBase sync unavailable; local persistence remains active.', error)
       })
-      .finally(() => { hydrated.current = true })
-    return () => { active = false }
+    return () => { active = false; sync.current?.stop(); sync.current = null }
   }, [initial, ownerId])
 
   useEffect(() => {
@@ -59,15 +64,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     }
     updatedAt.current = saveWorkspace(ownerId, state)
     if (!hydrated.current) return
-    setCloudStatus('saving')
-    const timeout = window.setTimeout(() => {
-      pushWorkspace({ data: state, updatedAt: updatedAt.current })
-        .then(() => setCloudStatus('synced'))
-        .catch((error) => {
-          setCloudStatus(isConnectivityError(error) ? 'offline' : 'error')
-          console.warn('PocketBase sync failed; changes remain saved locally.', error)
-        })
-    }, 700)
+    const timeout = window.setTimeout(() => sync.current?.publish(state), 250)
     return () => window.clearTimeout(timeout)
   }, [state, ownerId])
 

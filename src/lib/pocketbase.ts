@@ -1,15 +1,31 @@
 import PocketBase, { ClientResponseError, type RecordModel } from 'pocketbase'
 import type { WorkspaceState } from '../types'
+import { diffWorkspace, materializeWorkspace, mergeOperation, nextClock, type CrdtEntries, type CrdtOperation } from './crdt'
 
 export const POCKETBASE_URL = import.meta.env.VITE_POCKETBASE_URL || 'https://pocketbase.knowledge.ovh'
 const AUTH_COLLECTION = 'lexigraph_users'
 const COLLECTION = 'lexigraph_workspaces'
+const SYNC_COLLECTION = 'lexigraph_sync_operations'
+const REPLICA_KEY = 'lexigraph-crdt-v1'
 
 interface WorkspaceRecord extends RecordModel {
   owner: string
   data: WorkspaceState
   clientUpdatedAt: string
   schemaVersion: number
+}
+
+interface SyncRecord extends RecordModel, CrdtOperation {
+  owner: string
+}
+
+interface ReplicaState {
+  version: 1
+  deviceId: string
+  counter: number
+  latestTimestamp: number
+  entries: CrdtEntries
+  pending: CrdtOperation[]
 }
 
 export interface WorkspaceSnapshot {
@@ -169,4 +185,166 @@ export async function pushWorkspace(snapshot: WorkspaceSnapshot) {
 
 export function isConnectivityError(error: unknown) {
   return error instanceof ClientResponseError && (error.status === 0 || error.isAbort)
+}
+
+function replicaStorageKey(ownerId: string) {
+  return `${REPLICA_KEY}:${ownerId}`
+}
+
+function loadReplica(ownerId: string): ReplicaState {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(replicaStorageKey(ownerId)) ?? '') as ReplicaState
+    if (parsed.version === 1 && parsed.deviceId && parsed.entries && Array.isArray(parsed.pending)) return parsed
+  } catch { /* create a fresh replica */ }
+  return { version: 1, deviceId: crypto.randomUUID(), counter: 0, latestTimestamp: 0, entries: {}, pending: [] }
+}
+
+function saveReplica(ownerId: string, replica: ReplicaState) {
+  localStorage.setItem(replicaStorageKey(ownerId), JSON.stringify(replica))
+}
+
+function operationFromRecord(record: SyncRecord): CrdtOperation {
+  return { opId: record.opId, deviceId: record.deviceId, clock: record.clock, entryKey: record.entryKey, deleted: record.deleted, value: record.value }
+}
+
+export interface RealtimeSyncOptions {
+  ownerId: string
+  local: WorkspaceSnapshot
+  onRemoteState: (snapshot: WorkspaceSnapshot) => void
+  onStatus: (status: CloudSyncStatus) => void
+}
+
+export interface WorkspaceSync {
+  publish: (state: WorkspaceState) => void
+  stop: () => void
+}
+
+export async function createWorkspaceSync({ ownerId, local, onRemoteState, onStatus }: RealtimeSyncOptions): Promise<WorkspaceSync> {
+  if (!pb.authStore.isValid || pb.authStore.record?.id !== ownerId) throw new Error('Authentication is required before workspace synchronization.')
+  const replica = loadReplica(ownerId)
+  let stopped = false
+  let previousState: WorkspaceState | null = null
+  let flushing: Promise<void> | null = null
+  let subscribed = false
+  let ready = false
+  let migrationChecked = false
+  let latestLocal = local
+
+  const persist = () => saveReplica(ownerId, replica)
+  const makeOperation = (entryKey: string, deleted: boolean, value?: unknown): CrdtOperation => {
+    replica.counter += 1
+    const clock = nextClock(replica.deviceId, replica.counter, replica.latestTimestamp)
+    replica.latestTimestamp = Number(clock.split(':')[0])
+    return { opId: crypto.randomUUID(), deviceId: replica.deviceId, clock, entryKey, deleted, value }
+  }
+  const apply = (operation: CrdtOperation) => {
+    replica.latestTimestamp = Math.max(replica.latestTimestamp, Number(operation.clock.split(':')[0]) || 0)
+    return mergeOperation(replica.entries, operation)
+  }
+  const emitMaterialized = () => {
+    const state = materializeWorkspace(replica.entries)
+    if (!state) return
+    previousState = structuredClone(state)
+    onRemoteState({ data: state, updatedAt: new Date().toISOString() })
+  }
+  const hasRemoteOperation = async (opId: string) => {
+    try {
+      await pb.collection(SYNC_COLLECTION).getFirstListItem(pb.filter('opId = {:opId}', { opId }))
+      return true
+    } catch { return false }
+  }
+  const flush = async () => {
+    if (flushing) return flushing
+    flushing = (async () => {
+      while (!stopped && replica.pending.length) {
+        const operation = replica.pending[0]
+        try {
+          await pb.collection(SYNC_COLLECTION).create({ owner: ownerId, ...operation, value: operation.value ?? null })
+        } catch (error) {
+          if (!(error instanceof ClientResponseError && error.status === 400 && await hasRemoteOperation(operation.opId))) throw error
+        }
+        replica.pending.shift()
+        persist()
+      }
+      if (!stopped) onStatus('synced')
+    })().catch((error) => {
+      if (!stopped) onStatus(isConnectivityError(error) || !navigator.onLine ? 'offline' : 'error')
+      throw error
+    }).finally(() => { flushing = null })
+    return flushing
+  }
+  const pullRemote = async () => {
+    const records = await pb.collection(SYNC_COLLECTION).getFullList<SyncRecord>({ sort: 'created' })
+    let changed = false
+    records.forEach((record) => { changed = apply(operationFromRecord(record)) || changed })
+    persist()
+    if (changed) emitMaterialized()
+    return records.length
+  }
+  const publish = (state: WorkspaceState) => {
+    if (stopped) return
+    latestLocal = { data: state, updatedAt: new Date().toISOString() }
+    const operations = diffWorkspace(previousState, state, makeOperation)
+    previousState = structuredClone(state)
+    if (!operations.length) return
+    operations.forEach((operation) => {
+      apply(operation)
+      replica.pending.push(operation)
+    })
+    persist()
+    onStatus(navigator.onLine ? 'saving' : 'offline')
+    if (ready && navigator.onLine) void flush().catch((error) => console.warn('PocketBase CRDT flush failed; operations remain queued.', error))
+  }
+  const receive = (record: SyncRecord) => {
+    if (stopped || !apply(operationFromRecord(record))) return
+    persist()
+    emitMaterialized()
+  }
+  const ensureSubscription = async () => {
+    if (subscribed) return
+    await pb.collection(SYNC_COLLECTION).subscribe<SyncRecord>('*', (event) => {
+      if (event.action === 'create' || event.action === 'update') receive(event.record)
+    })
+    subscribed = true
+  }
+  const reconnect = () => {
+    if (stopped) return
+    onStatus('connecting')
+    void (async () => {
+      await ensureSubscription()
+      const remoteCount = await pullRemote()
+      if (!remoteCount && !migrationChecked) {
+        migrationChecked = true
+        const legacy = await initializeCloud(latestLocal)
+        if (legacy) publish(legacy.data)
+      }
+      await flush()
+    })().catch((error) => {
+      subscribed = false
+      onStatus(isConnectivityError(error) || !navigator.onLine ? 'offline' : 'error')
+      console.warn('PocketBase CRDT reconnect failed.', error)
+    })
+  }
+  const goOffline = () => { if (!stopped) onStatus('offline') }
+
+  if (!Object.keys(replica.entries).length) {
+    publish(local.data)
+  } else {
+    previousState = materializeWorkspace(replica.entries)
+    emitMaterialized()
+  }
+  window.addEventListener('online', reconnect)
+  window.addEventListener('offline', goOffline)
+  ready = true
+  reconnect()
+
+  return {
+    publish,
+    stop: () => {
+      stopped = true
+      window.removeEventListener('online', reconnect)
+      window.removeEventListener('offline', goOffline)
+      if (subscribed) void pb.collection(SYNC_COLLECTION).unsubscribe('*')
+    },
+  }
 }

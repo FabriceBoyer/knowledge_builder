@@ -32,7 +32,7 @@ export function Layout({ children }: { children: ReactNode }) {
           <Icon size={17} /><span>{label}</span>
         </NavLink>)}
       </nav>
-      <span className={`cloud-status ${cloudStatus}`} title={cloudStatus === 'synced' ? 'Saved locally and to PocketBase' : cloudStatus === 'saving' || cloudStatus === 'connecting' ? 'Synchronizing with PocketBase' : 'Saved locally; cloud sync is unavailable'} aria-label={`Cloud sync: ${cloudStatus}`}>
+      <span className={`cloud-status ${cloudStatus}`} title={cloudStatus === 'synced' ? 'Live sync active across your devices' : cloudStatus === 'saving' || cloudStatus === 'connecting' ? 'Merging changes with PocketBase' : 'Saved locally; changes will merge when reconnected'} aria-label={`Cloud sync: ${cloudStatus}`}>
         {cloudStatus === 'synced' ? <Cloud size={17} /> : cloudStatus === 'saving' || cloudStatus === 'connecting' ? <LoaderCircle size={17} /> : <CloudOff size={17} />}
       </span>
       <button className="user-button" onClick={logout} title={`Sign out ${user?.email}`} aria-label="Sign out"><span>{(user?.name || user?.email || '?')[0].toUpperCase()}</span><LogOut size={15} /></button>

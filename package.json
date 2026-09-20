@@ -11,6 +11,7 @@
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
     "test:pocketbase": "node scripts/smoke-pocketbase.mjs",
+    "test:pocketbase:realtime": "node scripts/smoke-realtime-sync.mjs",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
@@ -30,6 +31,7 @@
     "eslint": "^9.17.0",
     "eslint-plugin-react-hooks": "^5.1.0",
     "eslint-plugin-react-refresh": "^0.4.16",
+    "eventsource": "^5.1.1",
     "globals": "^15.14.0",
     "typescript": "~5.7.2",
     "typescript-eslint": "^8.18.2",

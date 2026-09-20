@@ -14,7 +14,7 @@ export function HomePage() {
           <Link className="primary-button" to="/words">Start with a word <ArrowRight size={18} /></Link>
           <Link className="secondary-button" to="/article">Map an article</Link>
         </div>
-        <div className="workspace-status"><span className="pulse" /> Auto-saved locally{cloudStatus === 'synced' ? ' and to PocketBase' : ''} · {state.senses.length} senses · {state.graphs.length} graphs</div>
+        <div className="workspace-status"><span className="pulse" /> Auto-saved locally{cloudStatus === 'synced' ? ' · live across devices' : ' · waiting to sync'} · {state.senses.length} senses · {state.graphs.length} graphs</div>
       </div>
       <div className="hero-visual" aria-hidden="true">
         <div className="orbit orbit-one" /><div className="orbit orbit-two" />
