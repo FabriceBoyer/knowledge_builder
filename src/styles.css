@@ -23,6 +23,7 @@ a { color:inherit; }
 .nav-link.active { box-shadow:0 1px 5px rgba(0,0,0,.05); }
 .icon-button,.bare-button { border:0; background:transparent; display:grid; place-items:center; cursor:pointer; }
 .icon-button { width:38px; height:38px; border-radius:10px; border:1px solid var(--line); background:var(--surface); }
+.install-button { color:var(--accent); }
 .cloud-status{width:28px;height:38px;display:grid;place-items:center;color:var(--muted)}.cloud-status.synced{color:#58af83}.cloud-status.saving svg,.cloud-status.connecting svg{animation:spin 1s linear infinite}.cloud-status.error,.cloud-status.offline{color:var(--accent)}
 .user-button{height:38px;display:flex;align-items:center;gap:5px;border:1px solid var(--line);border-radius:10px;background:var(--surface);padding:0 8px;cursor:pointer;color:var(--muted)}.user-button>span{width:22px;height:22px;border-radius:7px;background:color-mix(in srgb,var(--mint) 45%,transparent);display:grid;place-items:center;color:var(--ink);font-size:10px;font-weight:800}.user-button:hover{color:var(--accent)}
 .icon-button:disabled { opacity:.35; cursor:not-allowed; }.icon-button.danger:hover{color:var(--accent)}

@@ -1,0 +1,16 @@
+{
+  "name": "Lexigraph — map meaning",
+  "short_name": "Lexigraph",
+  "description": "Build precise, editable knowledge graphs from WordNet meanings.",
+  "lang": "en",
+  "dir": "ltr",
+  "start_url": "./#/",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#101815",
+  "theme_color": "#101815",
+  "icons": [
+    { "src": "./icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

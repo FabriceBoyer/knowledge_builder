@@ -115,6 +115,10 @@ Expose its credentials to PocketBase as `LEXIGRAPH_GITHUB_CLIENT_ID` and `LEXIGR
 
 The cloud icon in the application header shows the current state: green means realtime synchronization is active, rotating means connecting or merging, and coral means the application is safely queueing changes locally until reconnection.
 
+### Install as a mobile app
+
+Lexigraph is a Progressive Web App. On a supported browser, open the deployed site once while online, then use the **Install Lexigraph** button in the header (or the browser’s “Add to Home Screen” menu on iOS). The service worker caches the app shell for fast startup and offline navigation; workspace data remains in IndexedDB and continues to synchronize through PocketBase when connectivity returns.
+
 Run the disposable end-to-end check against the configured instance with:
 
 ```bash
