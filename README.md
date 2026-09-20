@@ -99,7 +99,7 @@ They create and configure:
 
 - `lexigraph_users`, a dedicated auth collection allowing registration and password authentication while preventing public listing or viewing and refusing authentication until `verified = true`;
 - `lexigraph_workspaces`, with an owner relation, JSON data, client timestamp, schema version, a unique owner index, and owner-only CRUD rules.
-- `lexigraph_sync_operations`, an immutable owner-only CRDT operation journal with unique operation IDs and an owner/creation index for realtime catch-up.
+- `lexigraph_sync_operations`, an immutable owner-only CRDT operation journal with unique operation IDs and an owner/clock index for realtime catch-up.
 
 Email verification and password-reset links return to `https://fabriceboyer.github.io/knowledge_builder/`. PocketBase SMTP must be enabled for password registration and recovery.
 

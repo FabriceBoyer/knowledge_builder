@@ -226,9 +226,13 @@ export async function createWorkspaceSync({ ownerId, local, onRemoteState, onSta
   let previousState: WorkspaceState | null = null
   let flushing: Promise<void> | null = null
   let subscribed = false
+  let subscriptionAttempt: Promise<void> | null = null
   let ready = false
   let migrationChecked = false
   let latestLocal = local
+  let retryDelay = 2000
+  let retryTimer: number | undefined
+  let syncing: Promise<void> | null = null
 
   const persist = () => saveReplica(ownerId, replica)
   const makeOperation = (entryKey: string, deleted: boolean, value?: unknown): CrdtOperation => {
@@ -274,7 +278,7 @@ export async function createWorkspaceSync({ ownerId, local, onRemoteState, onSta
     return flushing
   }
   const pullRemote = async () => {
-    const records = await pb.collection(SYNC_COLLECTION).getFullList<SyncRecord>({ sort: 'created' })
+    const records = await pb.collection(SYNC_COLLECTION).getFullList<SyncRecord>({ sort: 'clock' })
     let changed = false
     records.forEach((record) => { changed = apply(operationFromRecord(record)) || changed })
     persist()
@@ -292,26 +296,46 @@ export async function createWorkspaceSync({ ownerId, local, onRemoteState, onSta
       replica.pending.push(operation)
     })
     persist()
-    onStatus(navigator.onLine ? 'saving' : 'offline')
-    if (ready && navigator.onLine) void flush().catch((error) => console.warn('PocketBase CRDT flush failed; operations remain queued.', error))
+    onStatus('saving')
+    if (ready) void flush().catch((error) => {
+      console.warn('PocketBase CRDT flush failed; operations remain queued.', error)
+      scheduleRetry()
+    })
   }
   const receive = (record: SyncRecord) => {
     if (stopped || !apply(operationFromRecord(record))) return
     persist()
     emitMaterialized()
   }
-  const ensureSubscription = async () => {
-    if (subscribed) return
-    await pb.collection(SYNC_COLLECTION).subscribe<SyncRecord>('*', (event) => {
-      if (event.action === 'create' || event.action === 'update') receive(event.record)
-    })
-    subscribed = true
+  const scheduleRetry = () => {
+    if (stopped || retryTimer) return
+    retryTimer = window.setTimeout(() => {
+      retryTimer = undefined
+      synchronize()
+    }, retryDelay)
+    retryDelay = Math.min(retryDelay * 2, 30000)
   }
-  const reconnect = () => {
-    if (stopped) return
+  const startSubscription = () => {
+    if (stopped || subscribed || subscriptionAttempt) return
+    subscriptionAttempt = pb.collection(SYNC_COLLECTION).subscribe<SyncRecord>('*', (event) => {
+        if (event.action === 'create' || event.action === 'update') receive(event.record)
+      })
+      .then(() => { subscribed = true })
+      .catch(async (error) => {
+        subscribed = false
+        try { await pb.collection(SYNC_COLLECTION).unsubscribe('*') } catch { /* retry will rebuild the subscription */ }
+        if (!stopped) {
+          console.warn('PocketBase realtime unavailable; periodic catch-up remains active.', error)
+          scheduleRetry()
+        }
+      })
+      .finally(() => { subscriptionAttempt = null })
+  }
+  const synchronize = () => {
+    if (stopped || syncing) return
     onStatus('connecting')
-    void (async () => {
-      await ensureSubscription()
+    startSubscription()
+    syncing = (async () => {
       const remoteCount = await pullRemote()
       if (!remoteCount && !migrationChecked) {
         migrationChecked = true
@@ -319,13 +343,17 @@ export async function createWorkspaceSync({ ownerId, local, onRemoteState, onSta
         if (legacy) publish(legacy.data)
       }
       await flush()
+      retryDelay = 2000
+      if (retryTimer) window.clearTimeout(retryTimer)
+      retryTimer = undefined
     })().catch((error) => {
-      subscribed = false
       onStatus(isConnectivityError(error) || !navigator.onLine ? 'offline' : 'error')
-      console.warn('PocketBase CRDT reconnect failed.', error)
-    })
+      console.warn('PocketBase CRDT catch-up failed.', error)
+      scheduleRetry()
+    }).finally(() => { syncing = null })
   }
   const goOffline = () => { if (!stopped) onStatus('offline') }
+  const resume = () => { if (!document.hidden) synchronize() }
 
   if (!Object.keys(replica.entries).length) {
     publish(local.data)
@@ -333,17 +361,26 @@ export async function createWorkspaceSync({ ownerId, local, onRemoteState, onSta
     previousState = materializeWorkspace(replica.entries)
     emitMaterialized()
   }
-  window.addEventListener('online', reconnect)
+  window.addEventListener('online', synchronize)
   window.addEventListener('offline', goOffline)
+  window.addEventListener('focus', synchronize)
+  window.addEventListener('pageshow', synchronize)
+  document.addEventListener('visibilitychange', resume)
   ready = true
-  reconnect()
+  const catchUpTimer = window.setInterval(() => { if (!document.hidden) synchronize() }, 30000)
+  synchronize()
 
   return {
     publish,
     stop: () => {
       stopped = true
-      window.removeEventListener('online', reconnect)
+      window.removeEventListener('online', synchronize)
       window.removeEventListener('offline', goOffline)
+      window.removeEventListener('focus', synchronize)
+      window.removeEventListener('pageshow', synchronize)
+      document.removeEventListener('visibilitychange', resume)
+      if (retryTimer) window.clearTimeout(retryTimer)
+      window.clearInterval(catchUpTimer)
       if (subscribed) void pb.collection(SYNC_COLLECTION).unsubscribe('*')
     },
   }
