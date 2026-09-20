@@ -1,6 +1,9 @@
 /// <reference path="../pb_data/types.d.ts" />
 
 migrate((app) => {
+  const githubClientId = $os.getenv('LEXIGRAPH_GITHUB_CLIENT_ID')
+  const githubClientSecret = $os.getenv('LEXIGRAPH_GITHUB_CLIENT_SECRET')
+  const githubEnabled = githubClientId !== '' && githubClientSecret !== ''
   const users = new Collection({
     type: 'auth',
     name: 'lexigraph_users',
@@ -10,8 +13,17 @@ migrate((app) => {
     updateRule: 'id = @request.auth.id',
     deleteRule: 'id = @request.auth.id',
     manageRule: null,
-    authRule: '',
+    authRule: 'verified = true',
     passwordAuth: { enabled: true, identityFields: ['email'] },
+    oauth2: {
+      enabled: githubEnabled,
+      mappedFields: { id: '', name: 'name', username: '', avatarURL: '' },
+      providers: githubEnabled ? [{ name: 'github', clientId: githubClientId, clientSecret: githubClientSecret, displayName: 'GitHub' }] : [],
+    },
+    verificationTemplate: {
+      subject: 'Verify your Lexigraph email',
+      body: '<p>Hello,</p><p>Confirm your email address to activate your Lexigraph workspace.</p><p><a class="btn" href="https://fabriceboyer.github.io/knowledge_builder/?verification={TOKEN}" target="_blank" rel="noopener">Verify email</a></p><p>If you did not create this account, you can ignore this message.</p><p>Thanks,<br/>Lexigraph</p>',
+    },
     fields: [
       { name: 'name', type: 'text', max: 120 },
     ],

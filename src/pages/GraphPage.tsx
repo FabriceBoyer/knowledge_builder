@@ -83,6 +83,13 @@ export function GraphPage() {
     setLinkEditor(null)
   }
 
+  function deleteEditingLink() {
+    if (linkEditor?.mode !== 'edit') return
+    if (!window.confirm('Delete this semantic relationship?')) return
+    persist({ edges: graph.edges.filter((edge) => edge.id !== linkEditor.edgeId) })
+    setLinkEditor(null)
+  }
+
   const editingSense = linkEditor?.mode === 'edit' ? senses.get(graph.edges.find((edge) => edge.id === linkEditor.edgeId)?.linkerSenseId ?? '') : undefined
   const nodeLabel = (nodeId: string) => senses.get(graph.nodes.find((node) => node.id === nodeId)?.senseId ?? '')?.lemma ?? 'Missing sense'
 
@@ -118,6 +125,6 @@ export function GraphPage() {
         <Background gap={24} size={1} /><Controls /><MiniMap pannable zoomable nodeStrokeWidth={3} />
       </ReactFlow>
     </section>
-    {linkEditor && <div className="modal-backdrop"><div className="modal-card" role="dialog" aria-label={linkEditor.mode === 'edit' ? 'Edit semantic link' : 'Create semantic link'}><button className="modal-close" onClick={() => setLinkEditor(null)} aria-label="Close link editor"><X /></button><div className="eyebrow">Semantic glue</div><h2>{linkEditor.mode === 'edit' ? 'Edit this relationship' : 'How are these ideas connected?'}</h2><p>{linkEditor.mode === 'edit' ? `The current linking sense is “${editingSense?.lemma ?? 'unknown'}”. Choose a replacement.` : 'Choose another precise sense to label this relationship.'}</p><SenseSearch initialQuery={linkEditor.mode === 'edit' ? editingSense?.lemma ?? '' : ''} onSelect={linkWith} placeholder="Search for a linking sense…" /></div></div>}
+    {linkEditor && <div className="modal-backdrop"><div className="modal-card" role="dialog" aria-label={linkEditor.mode === 'edit' ? 'Edit semantic link' : 'Create semantic link'}><button className="modal-close" onClick={() => setLinkEditor(null)} aria-label="Close link editor"><X /></button><div className="eyebrow">Semantic glue</div><h2>{linkEditor.mode === 'edit' ? 'Edit this relationship' : 'How are these ideas connected?'}</h2><p>{linkEditor.mode === 'edit' ? `The current linking sense is “${editingSense?.lemma ?? 'unknown'}”. Choose a replacement or delete the relationship.` : 'Choose another precise sense to label this relationship.'}</p><SenseSearch initialQuery={linkEditor.mode === 'edit' ? editingSense?.lemma ?? '' : ''} onSelect={linkWith} placeholder="Search for a linking sense…" />{linkEditor.mode === 'edit' && <button className="delete-link-button" onClick={deleteEditingLink}><Trash2 size={16} /> Delete relationship</button>}</div></div>}
   </div>
 }

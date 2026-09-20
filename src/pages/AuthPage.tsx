@@ -1,31 +1,53 @@
-import { ArrowRight, Cloud, LockKeyhole, Network, ShieldCheck } from 'lucide-react'
-import { useState, type FormEvent } from 'react'
+import { ArrowRight, Cloud, Github, LockKeyhole, MailCheck, Network, ShieldCheck } from 'lucide-react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { useAuth } from '../context/AuthContext'
+import { confirmEmailVerification } from '../lib/pocketbase'
 
 function readableError(error: unknown, mode: 'login' | 'register') {
-  const fallback = mode === 'login' ? 'Invalid email or password.' : 'The account could not be created. Check the fields and try again.'
+  const fallback = mode === 'login' ? 'Invalid credentials or email not verified.' : 'The account could not be created. Check the fields and try again.'
   if (!(error instanceof Error)) return fallback
   if (/failed to fetch|network|load failed/i.test(error.message)) return 'PocketBase is unreachable. Check your connection and try again.'
+  if (/verif/i.test(error.message)) return 'Verify your email before signing in.'
   return fallback
 }
 
 export function AuthPage() {
-  const { login, register } = useAuth()
+  const { githubAvailable, login, loginWithGitHub, register, resendVerification } = useAuth()
   const [mode, setMode] = useState<'login' | 'register'>('login')
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
   const [submitting, setSubmitting] = useState(false)
+
+  useEffect(() => {
+    const token = new URLSearchParams(window.location.search).get('verification')
+    if (!token) return
+    setSubmitting(true)
+    confirmEmailVerification(token)
+      .then(() => { setMode('login'); setNotice('Email verified. You can now sign in.') })
+      .catch(() => setError('This verification link is invalid or has expired. Request a new email below.'))
+      .finally(() => {
+        window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`)
+        setSubmitting(false)
+      })
+  }, [])
 
   async function submit(event: FormEvent) {
     event.preventDefault()
     setError('')
+    setNotice('')
     if (password.length < 8) return setError('Use at least 8 characters for your password.')
     setSubmitting(true)
     try {
       if (mode === 'login') await login(email, password)
-      else await register(name, email, password)
+      else {
+        await register(name, email, password)
+        setMode('login')
+        setPassword('')
+        setNotice(`Verification email sent to ${email.trim().toLowerCase()}.`)
+      }
     } catch (reason) {
       setError(readableError(reason, mode))
     } finally {
@@ -34,7 +56,26 @@ export function AuthPage() {
   }
 
   function switchMode(next: 'login' | 'register') {
-    setMode(next); setError(''); setPassword('')
+    setMode(next); setError(''); setNotice(''); setPassword('')
+  }
+
+  function startGitHubLogin() {
+    setError('')
+    setNotice('')
+    setSubmitting(true)
+    loginWithGitHub()
+      .catch((reason) => setError(reason instanceof Error && /verified email/i.test(reason.message) ? reason.message : 'GitHub sign-in could not be completed.'))
+      .finally(() => setSubmitting(false))
+  }
+
+  function resend() {
+    if (!email.trim()) return setError('Enter your email address first.')
+    setError('')
+    setSubmitting(true)
+    resendVerification(email)
+      .then(() => setNotice(`A new verification email was sent to ${email.trim().toLowerCase()}.`))
+      .catch(() => setError('The verification email could not be sent. Try again shortly.'))
+      .finally(() => setSubmitting(false))
   }
 
   return <main className="auth-page">
@@ -49,14 +90,19 @@ export function AuthPage() {
         <div className="auth-lock"><LockKeyhole /></div>
         <div className="auth-tabs" role="tablist"><button className={mode === 'login' ? 'active' : ''} onClick={() => switchMode('login')}>Sign in</button><button className={mode === 'register' ? 'active' : ''} onClick={() => switchMode('register')}>Create account</button></div>
         <div className="auth-heading"><h2>{mode === 'login' ? 'Welcome back' : 'Create your workspace'}</h2><p>{mode === 'login' ? 'Continue building your semantic maps.' : 'Your private graph workspace will sync automatically.'}</p></div>
+        <button type="button" className="github-auth-button" onClick={startGitHubLogin} disabled={submitting || !githubAvailable}><Github size={18} /> Continue with GitHub</button>
+        {!githubAvailable && <p className="oauth-unavailable">GitHub sign-in is not enabled on this server yet.</p>}
+        <div className="auth-divider"><span>or use email</span></div>
         <form onSubmit={submit}>
           {mode === 'register' && <label>Display name<input value={name} onChange={(event) => setName(event.target.value)} required autoComplete="name" placeholder="Ada Lovelace" /></label>}
           <label>Email address<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoComplete="email" placeholder="you@example.com" /></label>
           <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} required minLength={8} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} placeholder="At least 8 characters" /></label>
           {error && <div className="auth-error" role="alert">{error}</div>}
+          {notice && <div className="auth-success" role="status"><MailCheck size={17} /> {notice}</div>}
           <button className="primary-button auth-submit" disabled={submitting}>{submitting ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'} <ArrowRight size={17} /></button>
         </form>
-        <p className="auth-note">Your password is handled by PocketBase and is never stored in the Lexigraph workspace.</p>
+        {mode === 'login' && <button type="button" className="resend-verification" onClick={resend} disabled={submitting}>Resend verification email</button>}
+        <p className="auth-note">Email verification is required. Passwords are handled by PocketBase and never stored in the Lexigraph workspace.</p>
       </div>
     </section>
   </main>

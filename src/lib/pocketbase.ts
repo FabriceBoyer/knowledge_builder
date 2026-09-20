@@ -28,6 +28,7 @@ export interface AuthUser {
   id: string
   email: string
   name: string
+  verified: boolean
 }
 
 function resetSyncState() {
@@ -38,7 +39,11 @@ function resetSyncState() {
 export function getAuthUser(): AuthUser | null {
   const record = pb.authStore.record
   if (!pb.authStore.isValid || !record) return null
-  return { id: record.id, email: String(record.email ?? ''), name: String(record.name ?? '') }
+  if (!record.verified) {
+    pb.authStore.clear()
+    return null
+  }
+  return { id: record.id, email: String(record.email ?? ''), name: String(record.name ?? ''), verified: true }
 }
 
 export async function restoreAuth() {
@@ -56,17 +61,45 @@ export async function restoreAuth() {
 export async function login(email: string, password: string) {
   await pb.collection(AUTH_COLLECTION).authWithPassword(email.trim().toLowerCase(), password)
   resetSyncState()
-  return getAuthUser()
+  const user = getAuthUser()
+  if (!user) throw new Error('Email verification is required.')
+  return user
 }
 
 export async function register(name: string, email: string, password: string) {
+  const normalizedEmail = email.trim().toLowerCase()
   await pb.collection(AUTH_COLLECTION).create({
-    email: email.trim().toLowerCase(),
+    email: normalizedEmail,
     password,
     passwordConfirm: password,
     name: name.trim(),
   })
-  return login(email, password)
+  await pb.collection(AUTH_COLLECTION).requestVerification(normalizedEmail)
+}
+
+export async function requestEmailVerification(email: string) {
+  await pb.collection(AUTH_COLLECTION).requestVerification(email.trim().toLowerCase())
+}
+
+export async function confirmEmailVerification(token: string) {
+  await pb.collection(AUTH_COLLECTION).confirmVerification(token)
+}
+
+export async function loginWithGitHub() {
+  await pb.collection(AUTH_COLLECTION).authWithOAuth2({ provider: 'github' })
+  resetSyncState()
+  const user = getAuthUser()
+  if (!user) throw new Error('GitHub did not provide a verified email address.')
+  return user
+}
+
+export async function isGitHubLoginAvailable() {
+  try {
+    const methods = await pb.collection(AUTH_COLLECTION).listAuthMethods()
+    return methods.oauth2.enabled && methods.oauth2.providers.some((provider) => provider.name === 'github')
+  } catch {
+    return false
+  }
 }
 
 export function logout() {

@@ -1,11 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { getAuthUser, login as pocketbaseLogin, logout as pocketbaseLogout, register as pocketbaseRegister, restoreAuth, type AuthUser } from '../lib/pocketbase'
+import { getAuthUser, isGitHubLoginAvailable, login as pocketbaseLogin, loginWithGitHub as pocketbaseGitHubLogin, logout as pocketbaseLogout, register as pocketbaseRegister, requestEmailVerification, restoreAuth, type AuthUser } from '../lib/pocketbase'
 
 interface AuthApi {
   user: AuthUser | null
   loading: boolean
+  githubAvailable: boolean
   login: (email: string, password: string) => Promise<void>
+  loginWithGitHub: () => Promise<void>
   register: (name: string, email: string, password: string) => Promise<void>
+  resendVerification: (email: string) => Promise<void>
   logout: () => void
 }
 
@@ -14,10 +17,15 @@ const AuthContext = createContext<AuthApi | null>(null)
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(getAuthUser)
   const [loading, setLoading] = useState(true)
+  const [githubAvailable, setGitHubAvailable] = useState(false)
 
   useEffect(() => {
     let active = true
-    restoreAuth().then((restored) => { if (active) setUser(restored) }).finally(() => { if (active) setLoading(false) })
+    Promise.all([restoreAuth(), isGitHubLoginAvailable()]).then(([restored, github]) => {
+      if (!active) return
+      setUser(restored)
+      setGitHubAvailable(github)
+    }).finally(() => { if (active) setLoading(false) })
     return () => { active = false }
   }, [])
 
@@ -27,16 +35,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const register = useCallback(async (name: string, email: string, password: string) => {
-    const authenticated = await pocketbaseRegister(name, email, password)
-    setUser(authenticated)
+    await pocketbaseRegister(name, email, password)
   }, [])
+
+  const loginWithGitHub = useCallback(() => pocketbaseGitHubLogin().then(setUser), [])
+  const resendVerification = useCallback((email: string) => requestEmailVerification(email), [])
 
   const logout = useCallback(() => {
     pocketbaseLogout()
     setUser(null)
   }, [])
 
-  const value = useMemo(() => ({ user, loading, login, register, logout }), [user, loading, login, register, logout])
+  const value = useMemo(() => ({ user, loading, githubAvailable, login, loginWithGitHub, register, resendVerification, logout }), [user, loading, githubAvailable, login, loginWithGitHub, register, resendVerification, logout])
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
 

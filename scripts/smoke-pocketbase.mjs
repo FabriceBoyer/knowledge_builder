@@ -10,6 +10,21 @@ const keepAccount = process.env.PB_SMOKE_KEEP === '1'
 let userId = ''
 
 try {
+  if (process.env.PB_VERIFY_REQUIRED === '1') {
+    const user = await pb.collection('lexigraph_users').create({
+      email, password, passwordConfirm: password, name: 'Verification smoke test',
+    })
+    await pb.collection('lexigraph_users').requestVerification(email)
+    let rejected = false
+    try {
+      await pb.collection('lexigraph_users').authWithPassword(email, password)
+    } catch (error) {
+      rejected = error?.status === 400 || error?.status === 403
+    }
+    if (!rejected) throw new Error('Unverified password authentication was not blocked.')
+    console.log(JSON.stringify({ message: 'Email verification requirement passed.', userId: user.id, email }))
+    process.exit(0)
+  }
   if (process.env.PB_DELETE_USER === '1') {
     const auth = await pb.collection('lexigraph_users').authWithPassword(email, password)
     await pb.collection('lexigraph_users').delete(auth.record.id)

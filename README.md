@@ -13,7 +13,7 @@ The application is built with React, TypeScript, Vite, and React Flow. It requir
 - Provides editable, draggable concept graphs. Edges are labelled with a separately selected WordNet sense.
 - Loads English Wikipedia pages through the public MediaWiki API, including a curated set of reproducible scientific topics.
 - Maps selected article words or phrases to WordNet senses and carries them into the graph palette.
-- Requires a PocketBase account, immediately persists senses, graph topology, node positions, and article annotations in account-scoped browser `localStorage`, then synchronizes them to PocketBase in the background.
+- Requires a verified PocketBase account (email/password or GitHub), immediately persists senses, graph topology, node positions, and article annotations in account-scoped browser `localStorage`, then synchronizes them to PocketBase in the background.
 - Follows the operating-system light/dark preference on first visit and allows a manual override.
 
 ## Local development
@@ -77,20 +77,29 @@ In the GitHub repository, enable **Settings → Pages → Build and deployment �
 
 The storage key is `lexigraph-workspace-v1`. Local persistence is always the first write, so editing remains safe if PocketBase is unavailable. The application then synchronizes the latest snapshot to `https://pocketbase.knowledge.ovh` (override with `VITE_POCKETBASE_URL`).
 
-Authentication is mandatory. Users create an account or sign in through the dedicated Lexigraph auth collection; PocketBase retains the session token while passwords are never stored in workspace data. Local snapshots are namespaced by authenticated user ID, preventing data leakage when multiple accounts share a browser. PocketBase record rules restrict every workspace operation to the authenticated owner, and the owner field has a unique index: users cannot list or read each other's data and each account has exactly one workspace. No administrator credential or application secret is shipped to the frontend.
+Authentication and email ownership verification are mandatory. Password registrations receive a verification link before they can sign in; the sign-in page can resend it. GitHub OAuth accounts are accepted only when GitHub supplies a verified email. PocketBase retains the session token while passwords are never stored in workspace data. Local snapshots are namespaced by authenticated user ID, preventing data leakage when multiple accounts share a browser. PocketBase record rules restrict every workspace operation to the authenticated owner, and the owner field has a unique index: users cannot list or read each other's data and each account has exactly one workspace. No administrator credential or application secret is shipped to the frontend.
 
 ### PocketBase collections
 
-The reproducible migration is in `pocketbase/pb_migrations/1758297600_lexigraph_cloud_sync.js`. Apply it from the PocketBase host with:
+The reproducible migrations are in `pocketbase/pb_migrations/`. Apply them from the PocketBase host with:
 
 ```bash
 ./pocketbase migrate up
 ```
 
-It creates:
+They create and configure:
 
-- `lexigraph_users`, a dedicated auth collection allowing account registration and password authentication while preventing public listing or viewing;
+- `lexigraph_users`, a dedicated auth collection allowing registration and password authentication while preventing public listing or viewing and refusing authentication until `verified = true`;
 - `lexigraph_workspaces`, with an owner relation, JSON data, client timestamp, schema version, a unique owner index, and owner-only CRUD rules.
+
+Email verification links return to `https://fabriceboyer.github.io/knowledge_builder/`. PocketBase SMTP must be enabled for password registration.
+
+For GitHub login, create a GitHub OAuth App with:
+
+- Homepage URL: `https://fabriceboyer.github.io/knowledge_builder/`
+- Authorization callback URL: `https://pocketbase.knowledge.ovh/api/oauth2-redirect`
+
+Expose its credentials to PocketBase as `LEXIGRAPH_GITHUB_CLIENT_ID` and `LEXIGRAPH_GITHUB_CLIENT_SECRET` before applying the migration. Secrets belong only on the PocketBase host and must never be added to Vite variables or committed.
 
 The cloud icon in the application header shows the current state: green means synchronized, rotating means connecting or saving, and coral means the application is safely working locally while the remote service is unavailable.
 
