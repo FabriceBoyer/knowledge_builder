@@ -99,7 +99,7 @@ For GitHub login, create a GitHub OAuth App with:
 - Homepage URL: `https://fabriceboyer.github.io/knowledge_builder/`
 - Authorization callback URL: `https://pocketbase.knowledge.ovh/api/oauth2-redirect`
 
-Expose its credentials to PocketBase as `LEXIGRAPH_GITHUB_CLIENT_ID` and `LEXIGRAPH_GITHUB_CLIENT_SECRET` before applying the migration. Secrets belong only on the PocketBase host and must never be added to Vite variables or committed.
+Expose its credentials to PocketBase as `LEXIGRAPH_GITHUB_CLIENT_ID` and `LEXIGRAPH_GITHUB_CLIENT_SECRET` before applying the migration. On an existing instance, the same provider can be enabled directly under **Collections → lexigraph_users → Options → OAuth2 → GitHub**. Secrets belong only on the PocketBase host or in PocketBase's encrypted configuration and must never be added to Vite variables or committed.
 
 The cloud icon in the application header shows the current state: green means synchronized, rotating means connecting or saving, and coral means the application is safely working locally while the remote service is unavailable.
 
