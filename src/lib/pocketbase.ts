@@ -52,7 +52,7 @@ export interface WorkspaceSnapshot {
   updatedAt: string
 }
 
-export type CloudSyncStatus = 'connecting' | 'synced' | 'saving' | 'offline' | 'error'
+export type CloudSyncStatus = 'connecting' | 'synced' | 'saving' | 'offline' | 'error' | 'local'
 
 const pb = new PocketBase(POCKETBASE_URL)
 pb.autoCancellation(false)
@@ -64,6 +64,7 @@ export interface AuthUser {
   email: string
   name: string
   verified: boolean
+  mode: 'cloud' | 'local'
 }
 
 function resetSyncState() {
@@ -78,7 +79,7 @@ export function getAuthUser(): AuthUser | null {
     pb.authStore.clear()
     return null
   }
-  return { id: record.id, email: String(record.email ?? ''), name: String(record.name ?? ''), verified: true }
+  return { id: record.id, email: String(record.email ?? ''), name: String(record.name ?? ''), verified: true, mode: 'cloud' }
 }
 
 export async function restoreAuth() {

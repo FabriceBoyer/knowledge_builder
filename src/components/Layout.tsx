@@ -49,7 +49,7 @@ export function Layout({ children }: { children: ReactNode }) {
           <Icon size={17} /><span>{label}</span>
         </NavLink>)}
       </nav>
-      <span className={`cloud-status ${cloudStatus}`} title={cloudStatus === 'synced' ? 'Live sync active across your devices' : cloudStatus === 'saving' || cloudStatus === 'connecting' ? 'Merging changes with PocketBase' : 'Saved locally; changes will merge when reconnected'} aria-label={`Cloud sync: ${cloudStatus}`}>
+      <span className={`cloud-status ${cloudStatus}`} title={cloudStatus === 'local' ? 'Saved only in this browser' : cloudStatus === 'synced' ? 'Live sync active across your devices' : cloudStatus === 'saving' || cloudStatus === 'connecting' ? 'Merging changes with PocketBase' : 'Saved locally; changes will merge when reconnected'} aria-label={cloudStatus === 'local' ? 'Local-only workspace' : `Cloud sync: ${cloudStatus}`}>
         {cloudStatus === 'synced' ? <Cloud size={17} /> : cloudStatus === 'saving' || cloudStatus === 'connecting' ? <LoaderCircle size={17} /> : <CloudOff size={17} />}
       </span>
       {installPrompt && <button className="icon-button install-button" onClick={installApp} aria-label="Install Lexigraph" title="Install Lexigraph"><Download size={17} /></button>}

@@ -1,4 +1,4 @@
-import { ArrowRight, Cloud, Github, LockKeyhole, MailCheck, Network, ShieldCheck } from 'lucide-react'
+import { ArrowRight, Cloud, Github, HardDrive, LockKeyhole, MailCheck, Network, ShieldCheck } from 'lucide-react'
 import { useEffect, useState, type FormEvent } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { confirmEmailVerification, confirmPasswordReset, requestPasswordReset } from '../lib/pocketbase'
@@ -12,7 +12,7 @@ function readableError(error: unknown, mode: 'login' | 'register') {
 }
 
 export function AuthPage() {
-  const { githubAvailable, login, loginWithGitHub, register, resendVerification } = useAuth()
+  const { githubAvailable, login, loginWithGitHub, register, resendVerification, useLocalWorkspace } = useAuth()
   const [mode, setMode] = useState<'login' | 'register'>('login')
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
@@ -163,6 +163,10 @@ export function AuthPage() {
           </form>
           {mode === 'login' && <div className="auth-secondary-actions"><button type="button" onClick={openPasswordReset} disabled={submitting}>Forgot password?</button><button type="button" onClick={resend} disabled={submitting}>Resend verification email</button></div>}
           <p className="auth-note">Email verification is required. Passwords are handled by PocketBase and never stored in the Lexigraph workspace.</p>
+          <div className="local-workspace-option">
+            <div><HardDrive size={17} /><span><strong>Use this device only</strong><small>No login, no cloud backup. Your work stays in this browser’s local storage.</small></span></div>
+            <button type="button" className="secondary-button" onClick={useLocalWorkspace} disabled={submitting}>Continue locally</button>
+          </div>
         </>}
       </div>
     </section>

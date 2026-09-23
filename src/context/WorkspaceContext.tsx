@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createWorkspaceSync, isConnectivityError, type CloudSyncStatus, type WorkspaceSync } from '../lib/pocketbase'
-import { initialWorkspace, loadWorkspaceSnapshot } from '../lib/storage'
+import { initialWorkspace, loadLocalOnlyWorkspace, loadWorkspaceSnapshot, saveLocalOnlyWorkspace } from '../lib/storage'
 import type { ArticleDocument, GraphDocument, Sense, WorkspaceState } from '../types'
 import { useAuth } from './AuthContext'
 
@@ -22,8 +22,9 @@ const WorkspaceContext = createContext<WorkspaceApi | null>(null)
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth()
   if (!user) throw new Error('WorkspaceProvider requires an authenticated user.')
+  const isLocalOnly = user.mode === 'local'
   const ownerId = user.id
-  const initial = useRef(loadWorkspaceSnapshot(ownerId)).current
+  const initial = useRef(isLocalOnly ? loadLocalOnlyWorkspace() : loadWorkspaceSnapshot(ownerId)).current
   const [state, setState] = useState(initial.data)
   const [cloudStatus, setCloudStatus] = useState<CloudSyncStatus>('connecting')
   const hydrated = useRef(false)
@@ -31,6 +32,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const sync = useRef<WorkspaceSync | null>(null)
 
   useEffect(() => {
+    if (isLocalOnly) {
+      hydrated.current = true
+      setCloudStatus('local')
+      return
+    }
     let active = true
     createWorkspaceSync({
       ownerId,
@@ -52,7 +58,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         console.warn('PocketBase sync unavailable; local persistence remains active.', error)
       })
     return () => { active = false; sync.current?.stop(); sync.current = null }
-  }, [initial, ownerId])
+  }, [initial, isLocalOnly, ownerId])
 
   useEffect(() => {
     if (applyingRemote.current) {
@@ -60,9 +66,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       return
     }
     if (!hydrated.current) return
-    const timeout = window.setTimeout(() => sync.current?.publish(state), 250)
+    const timeout = window.setTimeout(() => {
+      if (isLocalOnly) saveLocalOnlyWorkspace(state)
+      else sync.current?.publish(state)
+    }, 250)
     return () => window.clearTimeout(timeout)
-  }, [state, ownerId])
+  }, [isLocalOnly, state, ownerId])
 
   const addSense = useCallback((sense: Sense) => setState((current) => {
     if (current.senses.some((item) => item.wordId === sense.wordId)) return current

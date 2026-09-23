@@ -77,6 +77,10 @@ In the GitHub repository, enable **Settings → Pages → Build and deployment �
 
 The active local database is IndexedDB `lexigraph-cache`, object store `automerge-replicas`, keyed by the authenticated user ID. Each record contains the binary Automerge document and a durable queue of unsent binary changes. Local persistence happens before network delivery, so editing remains safe if PocketBase or the network is unavailable. The former `lexigraph-workspace-v1:<user-id>` snapshot and `lexigraph-crdt-v1:<user-id>` localStorage journal are read only as migration sources. The application synchronizes through `https://pocketbase.knowledge.ovh` (override with `VITE_POCKETBASE_URL`).
 
+### Local-only mode
+
+The sign-in screen also offers **Use this device only**. This mode requires neither a PocketBase account nor any network service, so it works directly from GitHub Pages. Its workspace is stored only in browser `localStorage` under `lexigraph-workspace-v1:local-only`; it is never uploaded, synchronized, or backed up. Clearing browser site data or changing browser/device permanently removes that local workspace. Sign out to return to the sign-in screen and select the cloud mode when cross-device backup is needed.
+
 ### Realtime and offline merge
 
 Lexigraph uses `@automerge/automerge` as its CRDT. The workspace is normalized into independently mergeable entries for senses, graph metadata, nodes, relations, the active graph, article metadata, and annotations. Every local mutation produces a binary Automerge change, updates the IndexedDB replica immediately, and enters the durable upload queue before network access is attempted.

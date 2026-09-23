@@ -1,6 +1,7 @@
 import type { GraphDocument, WorkspaceState } from '../types'
 
 export const STORAGE_KEY = 'lexigraph-workspace-v1'
+export const LOCAL_ONLY_OWNER = 'local-only'
 
 export interface LocalWorkspaceSnapshot {
   data: WorkspaceState
@@ -44,4 +45,12 @@ export function loadWorkspaceSnapshot(ownerId: string): LocalWorkspaceSnapshot {
 export function saveWorkspace(ownerId: string, state: WorkspaceState, updatedAt = new Date().toISOString()) {
   localStorage.setItem(scopedKey(ownerId), JSON.stringify({ data: state, updatedAt }))
   return updatedAt
+}
+
+export function loadLocalOnlyWorkspace() {
+  return loadWorkspaceSnapshot(LOCAL_ONLY_OWNER)
+}
+
+export function saveLocalOnlyWorkspace(state: WorkspaceState, updatedAt = new Date().toISOString()) {
+  return saveWorkspace(LOCAL_ONLY_OWNER, state, updatedAt)
 }
