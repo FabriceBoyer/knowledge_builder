@@ -1,16 +1,18 @@
 import { useCallback, useMemo, useState } from 'react'
 import { Background, ConnectionMode, Controls, Handle, MiniMap, Position, ReactFlow, applyNodeChanges, reconnectEdge, type Connection, type Edge, type Node, type NodeChange, type NodeProps } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { ArrowRight, ChevronDown, CirclePlus, Columns3, Network, Pencil, Plus, Share2, Trash2, X } from 'lucide-react'
+import { ArrowRight, ChevronDown, CirclePlus, Columns3, FilePlus2, Network, Pencil, Plus, Share2, Trash2, X } from 'lucide-react'
 import { SensePill } from '../components/SensePill'
 import { SenseSearch } from '../components/SenseSearch'
 import { useWorkspace } from '../context/WorkspaceContext'
-import { posLabel } from '../lib/wordnet'
+import { getSenses, posLabel } from '../lib/wordnet'
 import type { ConceptEdge, GraphDocument, Sense, StoredSense } from '../types'
 
 type SemanticNode = Node<{ sense?: StoredSense; onEdit: (id: string) => void; onDelete: (id: string) => void }, 'semantic'>
 type LinkEditor = { mode: 'create'; connection: Connection } | { mode: 'edit'; edgeId: string }
 type EditorView = 'canvas' | 'columns'
+const GRAPH_NODE_WIDTH = 210
+const GRAPH_NODE_HEIGHT = 88
 
 const miniMapColor = (node: Node) => {
   const pos = (node.data as SemanticNode['data']).sense?.pos
@@ -37,6 +39,8 @@ export function GraphPage() {
   const [entityEditor, setEntityEditor] = useState<string | null>(null)
   const [formSource, setFormSource] = useState('')
   const [formTarget, setFormTarget] = useState('')
+  const [quickEntry, setQuickEntry] = useState('')
+  const [quickNotice, setQuickNotice] = useState('')
   const compactCanvas = window.matchMedia('(max-width: 620px)').matches
   const senses = useMemo(() => new Map(state.senses.map((sense) => [sense.wordId, sense])), [state.senses])
   const persist = useCallback((next: Partial<GraphDocument>) => updateGraph({ ...graph, ...next }), [graph, updateGraph])
@@ -52,7 +56,7 @@ export function GraphPage() {
 
   const nodes: SemanticNode[] = graph.nodes.map((node) => {
     const sense = senses.get(node.senseId)
-    return { id: node.id, type: 'semantic', position: node.position, data: { sense, onEdit: setEntityEditor, onDelete: deleteEntity }, className: `flow-node pos-${sense?.pos ?? 'n'}` }
+    return { id: node.id, type: 'semantic', position: node.position, width: GRAPH_NODE_WIDTH, height: GRAPH_NODE_HEIGHT, data: { sense, onEdit: setEntityEditor, onDelete: deleteEntity }, className: `flow-node pos-${sense?.pos ?? 'n'}` }
   })
   const edges: Edge[] = graph.edges.map((edge) => {
     const linker = senses.get(edge.linkerSenseId)
@@ -115,6 +119,69 @@ export function GraphPage() {
     deleteGraph(graph.id)
   }
 
+  async function resolveToken(token: string) {
+    const match = token.trim().match(/^(.+?)\s*#\s*(\d+)$/)
+    if (!match) throw new Error(`“${token.trim()}” must use word#sense-number.`)
+    const choices = await getSenses(match[1].trim())
+    const sense = choices[Number(match[2]) - 1]
+    if (!sense) throw new Error(`WordNet has no sense ${match[2]} for “${match[1].trim()}”.`)
+    return sense
+  }
+
+  async function importQuickEntries() {
+    const lines = quickEntry.split('\n').map((line) => line.trim()).filter(Boolean)
+    if (!lines.length) return
+    setQuickNotice('Resolving WordNet senses…')
+    try {
+      const entries = await Promise.all(lines.map(async (line, index) => {
+        const parts = line.split(/(?:->|→)/).map((part) => part.trim()).filter(Boolean)
+        if (parts.length !== 1 && parts.length !== 3) throw new Error(`Line ${index + 1} must be one entity or source → relation → target.`)
+        return { parts, senses: await Promise.all(parts.map(resolveToken)) }
+      }))
+      let entitiesAdded = 0
+      let relationshipsAdded = 0
+      setState((current) => {
+        const active = current.graphs.find((item) => item.id === graph.id)
+        if (!active) return current
+        const allSenses = [...current.senses]
+        const nodes = [...active.nodes]
+        const edges = [...active.edges]
+        const ensureSense = (sense: Sense) => {
+          if (!allSenses.some((item) => item.wordId === sense.wordId)) allSenses.push({ ...sense, addedAt: Date.now() })
+        }
+        const ensureNode = (sense: Sense) => {
+          ensureSense(sense)
+          let node = nodes.find((item) => item.senseId === sense.wordId)
+          if (!node) {
+            const index = nodes.length
+            node = { id: crypto.randomUUID(), senseId: sense.wordId, position: { x: 100 + (index % 4) * 260, y: 80 + Math.floor(index / 4) * 160 } }
+            nodes.push(node)
+            entitiesAdded += 1
+          }
+          return node
+        }
+        entries.forEach(({ senses: resolved }) => {
+          if (resolved.length === 1) ensureNode(resolved[0])
+          else {
+            const source = ensureNode(resolved[0])
+            const target = ensureNode(resolved[2])
+            ensureSense(resolved[1])
+            if (!edges.some((edge) => edge.source === source.id && edge.target === target.id && edge.linkerSenseId === resolved[1].wordId)) {
+              edges.push({ id: crypto.randomUUID(), source: source.id, target: target.id, linkerSenseId: resolved[1].wordId })
+              relationshipsAdded += 1
+            }
+          }
+        })
+        const updated = { ...active, nodes, edges, updatedAt: Date.now() }
+        return { ...current, senses: allSenses, graphs: current.graphs.map((item) => item.id === active.id ? updated : item) }
+      })
+      setQuickNotice(`${entitiesAdded} ${entitiesAdded === 1 ? 'entity' : 'entities'} and ${relationshipsAdded} ${relationshipsAdded === 1 ? 'relationship' : 'relationships'} added.`)
+      setQuickEntry('')
+    } catch (error) {
+      setQuickNotice(error instanceof Error ? error.message : 'Could not import these entries.')
+    }
+  }
+
   const editingSense = linkEditor?.mode === 'edit' ? senses.get(graph.edges.find((edge) => edge.id === linkEditor.edgeId)?.linkerSenseId ?? '') : undefined
   const editingEntitySense = senses.get(graph.nodes.find((node) => node.id === entityEditor)?.senseId ?? '')
   const linkedNodeIds = new Set(graph.edges.flatMap((edge) => [edge.source, edge.target]))
@@ -139,6 +206,13 @@ export function GraphPage() {
           <button className="primary-button" disabled={!formSource || !formTarget || formSource === formTarget} onClick={() => setLinkEditor({ mode: 'create', connection: { source: formSource, target: formTarget, sourceHandle: null, targetHandle: null } })}>Link</button>
         </div>
       </div>
+      <details className="quick-entry-panel">
+        <summary><FilePlus2 size={14} /> Quick add</summary>
+        <p>Add one entity per line with <code>word#sense</code>, or create entities and a relationship with <code>source#n → relation#n → target#n</code>.</p>
+        <textarea value={quickEntry} onChange={(event) => { setQuickEntry(event.target.value); setQuickNotice('') }} placeholder={'system#1\ncause#2 → produce#1 → effect#1'} aria-label="Quick concept and relationship entry" spellCheck="false" />
+        <button className="secondary-button" onClick={() => void importQuickEntries()} disabled={!quickEntry.trim()}>Add entries</button>
+        {quickNotice && <small className={quickNotice.startsWith('Resolving') || quickNotice.includes('added.') ? 'quick-notice success' : 'quick-notice error'}>{quickNotice}</small>}
+      </details>
       <div className="sidebar-label">Sense palette <span>{state.senses.length}</span></div>
       <div className="node-palette">
         {state.senses.map((sense) => <SensePill key={sense.wordId} sense={sense} onClick={() => addNode(sense.wordId)} />)}

@@ -1,10 +1,22 @@
-import { BookOpen, ExternalLink, FlaskConical, Highlighter, Link as LinkIcon, Network, Search, X } from 'lucide-react'
+import { BookOpen, ExternalLink, FilePlus2, FlaskConical, Highlighter, Link as LinkIcon, Network, Search, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { SenseSearch } from '../components/SenseSearch'
 import { useWorkspace } from '../context/WorkspaceContext'
 import { fetchWikipediaArticle, suggestedTopics } from '../lib/wikipedia'
-import type { Sense } from '../types'
+import { getSenses } from '../lib/wordnet'
+import type { ArticleAnnotation, Sense, StoredSense } from '../types'
+
+function findAvailablePassage(extract: string, text: string, annotations: ArticleAnnotation[]) {
+  let start = extract.indexOf(text)
+  while (start >= 0) {
+    const end = start + text.length
+    const overlaps = annotations.some((item) => item.start !== undefined && item.end !== undefined && start < item.end && end > item.start)
+    if (!overlaps) return start
+    start = extract.indexOf(text, start + 1)
+  }
+  return -1
+}
 
 export function ArticlePage() {
   const { state, setState, setArticle, addSense } = useWorkspace()
@@ -12,6 +24,8 @@ export function ArticlePage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [selection, setSelection] = useState<{ text: string; start: number; end: number } | null>(null)
+  const [quickEntry, setQuickEntry] = useState('')
+  const [quickNotice, setQuickNotice] = useState('')
   const articleRef = useRef<HTMLDivElement>(null)
   const article = state.article
 
@@ -50,6 +64,46 @@ export function ArticlePage() {
     window.getSelection()?.removeAllRanges()
   }
 
+  async function importQuickAnnotations() {
+    if (!article) return
+    const lines = quickEntry.split('\n').map((line) => line.trim()).filter(Boolean)
+    if (!lines.length) return
+    setQuickNotice('Resolving WordNet senses…')
+    try {
+      const resolved = await Promise.all(lines.map(async (line, index) => {
+        const separator = line.lastIndexOf('|')
+        if (separator < 1) throw new Error(`Line ${index + 1} must use passage | word#sense-number.`)
+        const text = line.slice(0, separator).trim()
+        const token = line.slice(separator + 1).trim()
+        const match = token.match(/^(.+?)\s*#\s*(\d+)$/)
+        if (!text || !match) throw new Error(`Line ${index + 1} must use passage | word#sense-number.`)
+        const choices = await getSenses(match[1].trim())
+        const sense = choices[Number(match[2]) - 1]
+        if (!sense) throw new Error(`WordNet has no sense ${match[2]} for “${match[1].trim()}”.`)
+        return { text, sense }
+      }))
+      let added = 0
+      setState((current) => {
+        const currentArticle = current.article
+        if (!currentArticle || currentArticle.url !== article.url) return current
+        const annotations = [...currentArticle.annotations]
+        const allSenses: StoredSense[] = [...current.senses]
+        resolved.forEach(({ text, sense }) => {
+          const start = findAvailablePassage(currentArticle.extract, text, annotations)
+          if (start < 0) return
+          if (!allSenses.some((item) => item.wordId === sense.wordId)) allSenses.push({ ...sense, addedAt: Date.now() })
+          annotations.push({ id: crypto.randomUUID(), text, senseId: sense.wordId, start, end: start + text.length })
+          added += 1
+        })
+        return { ...current, senses: allSenses, article: { ...currentArticle, annotations } }
+      })
+      setQuickNotice(`${added} ${added === 1 ? 'passage' : 'passages'} mapped.`)
+      setQuickEntry('')
+    } catch (error) {
+      setQuickNotice(error instanceof Error ? error.message : 'Could not import these mappings.')
+    }
+  }
+
   const content = useMemo(() => {
     if (!article) return null
     const valid = [...article.annotations].filter((item) => item.start !== undefined && item.end !== undefined).sort((a, b) => a.start! - b.start!)
@@ -80,6 +134,13 @@ export function ArticlePage() {
       <div className="eyebrow">Reading map</div><h1>{article.title}</h1>
       <a href={article.url} target="_blank" rel="noreferrer">View original <ExternalLink size={13} /></a>
       <div className="annotation-count"><Highlighter size={18} /><span><strong>{article.annotations.length}</strong> mapped passages</span></div>
+      <details className="quick-entry-panel article-quick-entry">
+        <summary><FilePlus2 size={14} /> Quick map passages</summary>
+        <p>One line per annotation: <code>exact passage | word#sense</code>. The passage must appear in this article.</p>
+        <textarea value={quickEntry} onChange={(event) => { setQuickEntry(event.target.value); setQuickNotice('') }} placeholder={'a unified whole | system#8\noperate under rules | system#5'} aria-label="Quick article mapping entry" spellCheck="false" />
+        <button className="secondary-button" onClick={() => void importQuickAnnotations()} disabled={!quickEntry.trim()}>Map passages</button>
+        {quickNotice && <small className={quickNotice.startsWith('Resolving') || quickNotice.includes('mapped.') ? 'quick-notice success' : 'quick-notice error'}>{quickNotice}</small>}
+      </details>
       <div className="annotation-list">{article.annotations.map((annotation) => {
         const sense = state.senses.find((item) => item.wordId === annotation.senseId)
         return <div key={annotation.id}><q>{annotation.text}</q><span>{sense?.lemma} · {sense?.definition}</span><button onClick={() => setArticle({ ...article, annotations: article.annotations.filter((item) => item.id !== annotation.id) })}><X size={13} /></button></div>

@@ -10,10 +10,11 @@ The application is built with React, TypeScript, Vite, and React Flow. It requir
 - Presents definitions, parts of speech, synonyms, and example sentences for disambiguation.
 - assigns stable IDs to synsets (`wn:<pos>:<offset>`) and word occurrences (`wn:<pos>:<offset>:<word-index>`).
 - Collects chosen senses in a palette with definition tooltips.
-- Provides interchangeable canvas and text-column concept editors. Entities can be replaced or deleted with their incident relations; relationships can be relabelled, reconnected, or removed explicitly.
+- Provides interchangeable canvas and text-column concept editors. Entities can be replaced or deleted with their incident relations; relationships can be relabelled, reconnected, or removed explicitly. The visible minimap supports canvas orientation and navigation.
+- Supports quick, bulk graph entry with explicit `word#sense-number` notation and batch article mapping with `exact passage | word#sense-number`, preserving WordNet disambiguation while reducing repetitive input.
 - Loads English Wikipedia pages through the public MediaWiki API, including a curated set of reproducible scientific topics.
 - Maps selected article words or phrases to WordNet senses and carries them into the graph palette.
-- Requires a verified PocketBase account (email/password or GitHub), immediately persists senses, graph topology, node positions, and article annotations in account-scoped IndexedDB, then synchronizes every device through Automerge changes and PocketBase realtime events.
+- Cloud mode uses a verified PocketBase account (email/password or GitHub), immediately persists senses, graph topology, node positions, and article annotations in account-scoped IndexedDB, then synchronizes every device through Automerge changes and PocketBase realtime events. A separate local-only mode needs no login or backend.
 - Follows the operating-system light/dark preference on first visit and allows a manual override.
 
 ## Local development
