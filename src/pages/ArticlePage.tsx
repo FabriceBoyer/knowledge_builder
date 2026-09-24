@@ -1,4 +1,4 @@
-import { BookOpen, ExternalLink, FilePlus2, FlaskConical, Highlighter, Link as LinkIcon, Network, Search, X } from 'lucide-react'
+import { ArrowRight, BookOpen, ExternalLink, FilePlus2, FlaskConical, Highlighter, Link as LinkIcon, Network, Search, Sparkles, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { SenseSearch } from '../components/SenseSearch'
@@ -18,6 +18,16 @@ function findAvailablePassage(extract: string, text: string, annotations: Articl
   return -1
 }
 
+const illustratedArticle = {
+  title: 'The scientific method — a mapped example',
+  url: 'https://en.wikipedia.org/wiki/Scientific_method',
+  extract: 'Observation reveals a pattern. A hypothesis offers an explanation. An experiment tests the hypothesis. Evidence from the result supports or revises the explanation.',
+}
+
+const illustratedMappings = [
+  ['Observation', 'observation'], ['pattern', 'pattern'], ['hypothesis', 'hypothesis'], ['explanation', 'explanation'], ['experiment', 'experiment'], ['tests', 'test'], ['Evidence', 'evidence'], ['result', 'result'], ['supports', 'support'], ['revises', 'revise'],
+] as const
+
 export function ArticlePage() {
   const { state, setState, setArticle, addSense } = useWorkspace()
   const [input, setInput] = useState('')
@@ -35,6 +45,48 @@ export function ArticlePage() {
       const result = await fetchWikipediaArticle(value)
       setArticle({ ...result, annotations: [] })
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Unable to load that article.') }
+    finally { setLoading(false) }
+  }
+
+  async function loadIllustratedExample() {
+    setLoading(true); setError(''); setSelection(null)
+    try {
+      const lemmas = [...new Set([...illustratedMappings.map(([, lemma]) => lemma), 'produce', 'suggest', 'explain'])]
+      const resolved = await Promise.all(lemmas.map(async (lemma) => {
+        const sense = (await getSenses(lemma))[0]
+        if (!sense) throw new Error(`The bundled WordNet data is missing “${lemma}”.`)
+        return [lemma, sense] as const
+      }))
+      const byLemma = new Map(resolved)
+      const annotations: ArticleAnnotation[] = []
+      illustratedMappings.forEach(([text, lemma]) => {
+        const start = findAvailablePassage(illustratedArticle.extract, text, annotations)
+        if (start >= 0) annotations.push({ id: crypto.randomUUID(), text, senseId: byLemma.get(lemma)!.wordId, start, end: start + text.length })
+      })
+      setState((current) => {
+        const graphId = crypto.randomUUID()
+        const observation = byLemma.get('observation')!
+        const hypothesis = byLemma.get('hypothesis')!
+        const experiment = byLemma.get('experiment')!
+        const evidence = byLemma.get('evidence')!
+        const explanation = byLemma.get('explanation')!
+        const nodes = [observation, hypothesis, experiment, evidence, explanation].map((sense, index) => ({ id: crypto.randomUUID(), senseId: sense.wordId, position: { x: 80 + (index % 3) * 260, y: 80 + Math.floor(index / 3) * 180 } }))
+        const node = (senseId: string) => nodes.find((item) => item.senseId === senseId)!.id
+        const graph = {
+          id: graphId, name: 'Scientific method — mapped example', createdAt: Date.now(), updatedAt: Date.now(), nodes,
+          edges: [
+            { id: crypto.randomUUID(), source: node(observation.wordId), target: node(hypothesis.wordId), linkerSenseId: byLemma.get('suggest')!.wordId },
+            { id: crypto.randomUUID(), source: node(hypothesis.wordId), target: node(explanation.wordId), linkerSenseId: byLemma.get('explain')!.wordId },
+            { id: crypto.randomUUID(), source: node(experiment.wordId), target: node(hypothesis.wordId), linkerSenseId: byLemma.get('test')!.wordId },
+            { id: crypto.randomUUID(), source: node(experiment.wordId), target: node(evidence.wordId), linkerSenseId: byLemma.get('produce')!.wordId },
+            { id: crypto.randomUUID(), source: node(evidence.wordId), target: node(hypothesis.wordId), linkerSenseId: byLemma.get('support')!.wordId },
+          ],
+        }
+        const senses = [...current.senses]
+        resolved.forEach(([, sense]) => { if (!senses.some((item) => item.wordId === sense.wordId)) senses.push({ ...sense, addedAt: Date.now() }) })
+        return { ...current, senses, graphs: [...current.graphs, graph], activeGraphId: graphId, article: { ...illustratedArticle, annotations } }
+      })
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Unable to load the illustrated example.') }
     finally { setLoading(false) }
   }
 
@@ -124,6 +176,7 @@ export function ArticlePage() {
     <section className="page-heading centered"><div className="eyebrow"><BookOpen size={14} /> Article mapper</div><h1>Turn reading into structure</h1><p>Load any English Wikipedia page. Select a word or phrase, resolve its meaning, then carry it into a concept graph.</p></section>
     <div className="url-loader"><LinkIcon size={20} /><input value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && load()} placeholder="Paste an English Wikipedia URL or article title" /><button className="primary-button" disabled={loading || !input.trim()} onClick={() => load()}>{loading ? 'Loading…' : 'Load article'} <Search size={17} /></button></div>
     {error && <p className="error-message">{error}</p>}
+    <button className="illustrated-example" onClick={() => void loadIllustratedExample()} disabled={loading}><Sparkles size={19} /><span><strong>Open the fully mapped example</strong><small>A short scientific-method article with WordNet annotations and a linked concept graph.</small></span><ArrowRight size={18} /></button>
     <div className="suggested-heading"><FlaskConical size={18} /><div><h2>Reproducible science, suggested</h2><p>A few rich places to begin.</p></div></div>
     <div className="topic-grid">{suggestedTopics.map((topic, index) => <button key={topic.title} onClick={() => { setInput(topic.title); load(topic.title) }}><span>0{index + 1}</span><h3>{topic.title}</h3><p>{topic.blurb}</p><ExternalLink size={16} /></button>)}</div>
   </div>
