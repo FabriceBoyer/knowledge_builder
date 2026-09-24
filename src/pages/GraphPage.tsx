@@ -12,6 +12,11 @@ type SemanticNode = Node<{ sense?: StoredSense; onEdit: (id: string) => void; on
 type LinkEditor = { mode: 'create'; connection: Connection } | { mode: 'edit'; edgeId: string }
 type EditorView = 'canvas' | 'columns'
 
+const miniMapColor = (node: Node) => {
+  const pos = (node.data as SemanticNode['data']).sense?.pos
+  return pos === 'v' ? '#ef684d' : pos === 'a' ? '#78adbc' : pos === 'r' ? '#b98ccf' : '#75b99a'
+}
+
 function SemanticNodeCard({ id, data, selected }: NodeProps<SemanticNode>) {
   const sense = data.sense
   return <div className={`graph-node ${selected ? 'selected' : ''}`}>
@@ -145,7 +150,7 @@ export function GraphPage() {
     {view === 'canvas' ? <section className="graph-canvas">
       <div className="canvas-hint"><CirclePlus size={15} /> Drag to connect · use the node actions to edit or delete.</div>
       <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={onNodesChange} onConnect={(connection) => setLinkEditor({ mode: 'create', connection })} onReconnect={onReconnect} onNodeDoubleClick={(_, node) => setEntityEditor(node.id)} onEdgeDoubleClick={(_, edge) => setLinkEditor({ mode: 'edit', edgeId: edge.id })} connectionMode={ConnectionMode.Strict} edgesReconnectable fitView fitViewOptions={{ minZoom: compactCanvas ? 1 : 0.1, maxZoom: 1 }} minZoom={compactCanvas ? 0.75 : 0.5} deleteKeyCode={null}>
-        <Background gap={24} size={1} /><Controls /><MiniMap pannable zoomable nodeStrokeWidth={3} />
+        <Background gap={24} size={1} /><Controls /><MiniMap pannable zoomable nodeColor={miniMapColor} nodeStrokeColor="#101815" nodeStrokeWidth={2} nodeBorderRadius={5} bgColor="#18221f" maskColor="rgba(16, 24, 21, 0.65)" maskStrokeColor="#ff8066" ariaLabel="Graph overview: drag or click to navigate the canvas" />
       </ReactFlow>
     </section> : <section className="column-editor">
       <header><div><div className="eyebrow"><Columns3 size={14} /> Text editor</div><h2>{graph.name}</h2><p>Edit the same semantic model as readable statements. No canvas, dragging, or zooming required.</p></div><span>{graph.nodes.length} entities · {graph.edges.length} relationships</span></header>
