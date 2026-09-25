@@ -10,9 +10,10 @@ interface Props {
   initialQuery?: string
   compact?: boolean
   keepFocusAfterSelect?: boolean
+  disabled?: boolean
 }
 
-export function SenseSearch({ onSelect, placeholder = 'Search all WordNet words…', initialQuery = '', compact = false, keepFocusAfterSelect = false }: Props) {
+export function SenseSearch({ onSelect, placeholder = 'Search all WordNet words…', initialQuery = '', compact = false, keepFocusAfterSelect = false, disabled = false }: Props) {
   const { state } = useWorkspace()
   const [query, setQuery] = useState(initialQuery)
   const [results, setResults] = useState<SearchEntry[]>([])
@@ -100,7 +101,7 @@ export function SenseSearch({ onSelect, placeholder = 'Search all WordNet words�
   return <div className={`sense-search ${compact ? 'compact' : ''}`}>
     <div className="search-box">
       <Search size={20} />
-      <input ref={inputRef} value={query} onChange={(event) => { setQuery(event.target.value); setActiveIndex(-1); if (selectedWord) { setSelectedWord(''); setSenses([]) } }} onKeyDown={onSearchKeyDown} placeholder={placeholder} aria-label={placeholder} aria-expanded={results.length > 0 || senses.length > 0} aria-activedescendant={activeIndex >= 0 ? `sense-search-option-${activeIndex}` : undefined} autoComplete="off" />
+      <input ref={inputRef} disabled={disabled} value={query} onChange={(event) => { setQuery(event.target.value); setActiveIndex(-1); if (selectedWord) { setSelectedWord(''); setSenses([]) } }} onKeyDown={onSearchKeyDown} placeholder={placeholder} aria-label={placeholder} aria-expanded={results.length > 0 || senses.length > 0} aria-activedescendant={activeIndex >= 0 ? `sense-search-option-${activeIndex}` : undefined} autoComplete="off" />
       {query && <button className="bare-button" onClick={reset} aria-label="Clear search"><X size={17} /></button>}
     </div>
     {orderedResults.length > 0 && <div className="search-results" role="listbox">
