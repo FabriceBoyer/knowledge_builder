@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import { Background, ConnectionMode, Controls, Handle, MiniMap, Position, ReactFlow, applyNodeChanges, reconnectEdge, type Connection, type Edge, type Node, type NodeChange, type NodeProps } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { ArrowRight, ChevronDown, CirclePlus, Columns3, FilePlus2, Network, Pencil, Plus, Share2, Trash2, X } from 'lucide-react'
+import { ArrowRight, ChevronDown, CirclePlus, Columns3, FilePlus2, LayoutTemplate, Network, Pencil, Plus, Share2, Trash2, X } from 'lucide-react'
 import { SensePill } from '../components/SensePill'
 import { SenseSearch } from '../components/SenseSearch'
 import { useWorkspace } from '../context/WorkspaceContext'
@@ -11,6 +11,7 @@ import type { ConceptEdge, GraphDocument, Sense, StoredSense } from '../types'
 type SemanticNode = Node<{ sense?: StoredSense; onEdit: (id: string) => void; onDelete: (id: string) => void }, 'semantic'>
 type LinkEditor = { mode: 'create'; connection: Connection } | { mode: 'edit'; edgeId: string }
 type EditorView = 'canvas' | 'columns'
+type LayoutAlgorithm = 'manual' | 'hierarchy-horizontal' | 'hierarchy-vertical' | 'radial' | 'grid'
 const GRAPH_NODE_WIDTH = 210
 const GRAPH_NODE_HEIGHT = 88
 
@@ -31,6 +32,68 @@ function SemanticNodeCard({ id, data, selected }: NodeProps<SemanticNode>) {
 
 const nodeTypes = { semantic: SemanticNodeCard }
 
+function hierarchyPositions(graph: GraphDocument, horizontal: boolean) {
+  const incoming = new Map(graph.nodes.map((node) => [node.id, 0]))
+  const outgoing = new Map(graph.nodes.map((node) => [node.id, [] as string[]]))
+  graph.edges.forEach((edge) => {
+    if (!incoming.has(edge.source) || !incoming.has(edge.target)) return
+    incoming.set(edge.target, (incoming.get(edge.target) ?? 0) + 1)
+    outgoing.get(edge.source)?.push(edge.target)
+  })
+  const levels = new Map<string, number>()
+  const queue = graph.nodes.filter((node) => incoming.get(node.id) === 0).map((node) => node.id)
+  if (!queue.length && graph.nodes[0]) queue.push(graph.nodes[0].id)
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const source = queue[cursor]
+    const level = levels.get(source) ?? 0
+    levels.set(source, level)
+    outgoing.get(source)?.forEach((target) => {
+      levels.set(target, Math.max(levels.get(target) ?? 0, level + 1))
+      incoming.set(target, (incoming.get(target) ?? 1) - 1)
+      if (incoming.get(target) === 0) queue.push(target)
+    })
+  }
+  let fallbackLevel = Math.max(0, ...levels.values()) + 1
+  graph.nodes.forEach((node) => { if (!levels.has(node.id)) levels.set(node.id, fallbackLevel++) })
+  const lanes = new Map<number, string[]>()
+  graph.nodes.forEach((node) => { const level = levels.get(node.id) ?? 0; lanes.set(level, [...(lanes.get(level) ?? []), node.id]) })
+  const positions = new Map<string, { x: number; y: number }>()
+  lanes.forEach((ids, level) => ids.forEach((id, index) => positions.set(id, horizontal
+    ? { x: 70 + level * 300, y: 70 + index * 145 }
+    : { x: 70 + index * 250, y: 70 + level * 165 })))
+  return positions
+}
+
+function radialPositions(graph: GraphDocument) {
+  if (!graph.nodes.length) return new Map<string, { x: number; y: number }>()
+  const neighbours = new Map(graph.nodes.map((node) => [node.id, [] as string[]]))
+  graph.edges.forEach((edge) => { neighbours.get(edge.source)?.push(edge.target); neighbours.get(edge.target)?.push(edge.source) })
+  const root = graph.nodes.find((node) => !graph.edges.some((edge) => edge.target === node.id)) ?? graph.nodes[0]
+  const distances = new Map([[root.id, 0]])
+  const queue = [root.id]
+  for (let cursor = 0; cursor < queue.length; cursor += 1) neighbours.get(queue[cursor])?.forEach((id) => {
+    if (distances.has(id)) return
+    distances.set(id, (distances.get(queue[cursor]) ?? 0) + 1)
+    queue.push(id)
+  })
+  let orphanRing = Math.max(0, ...distances.values()) + 1
+  graph.nodes.forEach((node) => { if (!distances.has(node.id)) distances.set(node.id, orphanRing++) })
+  const rings = new Map<number, string[]>()
+  graph.nodes.forEach((node) => { const ring = distances.get(node.id) ?? 0; rings.set(ring, [...(rings.get(ring) ?? []), node.id]) })
+  const positions = new Map<string, { x: number; y: number }>()
+  const center = { x: 480, y: 330 }
+  rings.forEach((ids, ring) => ids.forEach((id, index) => {
+    if (ring === 0) positions.set(id, center)
+    else { const angle = (Math.PI * 2 * index) / ids.length - Math.PI / 2; const radius = ring * 210; positions.set(id, { x: center.x + Math.cos(angle) * radius, y: center.y + Math.sin(angle) * radius }) }
+  }))
+  return positions
+}
+
+function gridPositions(graph: GraphDocument) {
+  const columns = Math.max(2, Math.ceil(Math.sqrt(graph.nodes.length)))
+  return new Map(graph.nodes.map((node, index) => [node.id, { x: 70 + (index % columns) * 250, y: 70 + Math.floor(index / columns) * 150 }]))
+}
+
 export function GraphPage() {
   const { state, setState, addSense, createGraph, deleteGraph, updateGraph } = useWorkspace()
   const graph = state.graphs.find((item) => item.id === state.activeGraphId) ?? state.graphs[0]
@@ -41,6 +104,7 @@ export function GraphPage() {
   const [formTarget, setFormTarget] = useState('')
   const [quickEntry, setQuickEntry] = useState('')
   const [quickNotice, setQuickNotice] = useState('')
+  const [layoutAlgorithm, setLayoutAlgorithm] = useState<LayoutAlgorithm>('manual')
   const compactCanvas = window.matchMedia('(max-width: 620px)').matches
   const senses = useMemo(() => new Map(state.senses.map((sense) => [sense.wordId, sense])), [state.senses])
   const persist = useCallback((next: Partial<GraphDocument>) => updateGraph({ ...graph, ...next }), [graph, updateGraph])
@@ -81,6 +145,14 @@ export function GraphPage() {
   function addNode(senseId: string) {
     if (graph.nodes.some((node) => node.senseId === senseId)) return
     persist({ nodes: [...graph.nodes, { id: crypto.randomUUID(), senseId, position: { x: 100 + (graph.nodes.length % 3) * 240, y: 80 + Math.floor(graph.nodes.length / 3) * 150 } }] })
+  }
+
+  function applyLayout() {
+    if (layoutAlgorithm === 'manual') return
+    const positions = layoutAlgorithm === 'hierarchy-horizontal' ? hierarchyPositions(graph, true)
+      : layoutAlgorithm === 'hierarchy-vertical' ? hierarchyPositions(graph, false)
+        : layoutAlgorithm === 'radial' ? radialPositions(graph) : gridPositions(graph)
+    persist({ nodes: graph.nodes.map((node) => ({ ...node, position: positions.get(node.id) ?? node.position })) })
   }
 
   function replaceEntity(sense: Sense) {
@@ -197,6 +269,7 @@ export function GraphPage() {
         <button className="icon-button danger" onClick={removeGraph} disabled={state.graphs.length === 1} aria-label="Delete graph"><Trash2 size={17} /></button>
       </div>
       <input className="graph-name" value={graph.name} onChange={(event) => persist({ name: event.target.value })} aria-label="Graph name" />
+      <div className="graph-layout-control"><label><LayoutTemplate size={14} /> Layout<select value={layoutAlgorithm} onChange={(event) => setLayoutAlgorithm(event.target.value as LayoutAlgorithm)}><option value="manual">Manual positions</option><option value="hierarchy-horizontal">Hierarchy · left to right</option><option value="hierarchy-vertical">Hierarchy · top to bottom</option><option value="radial">Radial · connected rings</option><option value="grid">Grid · compact overview</option></select></label><button className="secondary-button" onClick={applyLayout} disabled={layoutAlgorithm === 'manual'}>Apply</button><small>{layoutAlgorithm === 'manual' ? 'Drag entities freely; their positions are saved.' : 'Applies a layout and then leaves every entity editable by hand.'}</small></div>
       <div className="graph-link-builder">
         <div className="sidebar-label">Create a relationship</div>
         <div className="graph-link-fields">
