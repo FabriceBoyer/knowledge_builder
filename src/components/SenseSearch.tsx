@@ -8,9 +8,10 @@ interface Props {
   placeholder?: string
   initialQuery?: string
   compact?: boolean
+  keepFocusAfterSelect?: boolean
 }
 
-export function SenseSearch({ onSelect, placeholder = 'Search all WordNet wordsâ€¦', initialQuery = '', compact = false }: Props) {
+export function SenseSearch({ onSelect, placeholder = 'Search all WordNet wordsâ€¦', initialQuery = '', compact = false, keepFocusAfterSelect = false }: Props) {
   const [query, setQuery] = useState(initialQuery)
   const [results, setResults] = useState<SearchEntry[]>([])
   const [selectedWord, setSelectedWord] = useState('')
@@ -19,6 +20,7 @@ export function SenseSearch({ onSelect, placeholder = 'Search all WordNet wordsâ
   const [activeIndex, setActiveIndex] = useState(-1)
   const request = useRef(0)
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => { setQuery(initialQuery); setActiveIndex(-1) }, [initialQuery])
   useEffect(() => {
@@ -55,6 +57,7 @@ export function SenseSearch({ onSelect, placeholder = 'Search all WordNet wordsâ
   function chooseSense(sense: Sense) {
     onSelect(sense)
     reset()
+    if (keepFocusAfterSelect) window.requestAnimationFrame(() => inputRef.current?.focus())
   }
 
   function onSearchKeyDown(event: KeyboardEvent<HTMLInputElement>) {
@@ -87,7 +90,7 @@ export function SenseSearch({ onSelect, placeholder = 'Search all WordNet wordsâ
   return <div className={`sense-search ${compact ? 'compact' : ''}`}>
     <div className="search-box">
       <Search size={20} />
-      <input value={query} onChange={(event) => { setQuery(event.target.value); setActiveIndex(-1); if (selectedWord) { setSelectedWord(''); setSenses([]) } }} onKeyDown={onSearchKeyDown} placeholder={placeholder} aria-label={placeholder} aria-expanded={results.length > 0 || senses.length > 0} aria-activedescendant={activeIndex >= 0 ? `sense-search-option-${activeIndex}` : undefined} autoComplete="off" />
+      <input ref={inputRef} value={query} onChange={(event) => { setQuery(event.target.value); setActiveIndex(-1); if (selectedWord) { setSelectedWord(''); setSenses([]) } }} onKeyDown={onSearchKeyDown} placeholder={placeholder} aria-label={placeholder} aria-expanded={results.length > 0 || senses.length > 0} aria-activedescendant={activeIndex >= 0 ? `sense-search-option-${activeIndex}` : undefined} autoComplete="off" />
       {query && <button className="bare-button" onClick={reset} aria-label="Clear search"><X size={17} /></button>}
     </div>
     {results.length > 0 && <div className="search-results" role="listbox">

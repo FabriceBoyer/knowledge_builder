@@ -19,13 +19,28 @@ function findAvailablePassage(extract: string, text: string, annotations: Articl
 }
 
 const illustratedArticle = {
-  title: 'The scientific method — a mapped example',
-  url: 'https://en.wikipedia.org/wiki/Scientific_method',
-  extract: 'Observation reveals a pattern. A hypothesis offers an explanation. An experiment tests the hypothesis. Evidence from the result supports or revises the explanation.',
+  title: 'How scientific inquiry builds reliable knowledge',
+  url: '',
+  source: 'example' as const,
+  extract: `Scientific inquiry begins with a careful observation: a researcher notices a pattern, formulates a question, and states a hypothesis.
+
+The hypothesis leads to a prediction that can be tested. An experiment specifies a method, controls relevant conditions, and records a measurement.
+
+The resulting data are analyzed to distinguish signal from uncertainty. A result becomes evidence only when the analysis explains why the observed pattern is unlikely to be accidental.
+
+Researchers compare the evidence with an alternative explanation, revise the model, and publish a conclusion that others can inspect.
+
+Replication repeats the experiment with new samples. Agreement strengthens confidence; disagreement identifies an error, a limit, or a new question.
+
+A good scientific explanation remains open to revision. It connects observation, prediction, evidence, and theory into a model that can guide the next experiment.`,
 }
 
 const illustratedMappings = [
-  ['Observation', 'observation'], ['pattern', 'pattern'], ['hypothesis', 'hypothesis'], ['explanation', 'explanation'], ['experiment', 'experiment'], ['tests', 'test'], ['Evidence', 'evidence'], ['result', 'result'], ['supports', 'support'], ['revises', 'revise'],
+  ['observation', 'observation'], ['pattern', 'pattern'], ['question', 'question'], ['hypothesis', 'hypothesis'], ['prediction', 'prediction'], ['tested', 'test'], ['experiment', 'experiment'], ['method', 'method'], ['conditions', 'condition'], ['measurement', 'measurement'], ['data', 'data'], ['analyzed', 'analyze'], ['signal', 'signal'], ['uncertainty', 'uncertainty'], ['A result', 'result'], ['evidence', 'evidence'], ['analysis', 'analysis'], ['accidental', 'accidental'], ['alternative explanation', 'explanation'], ['model', 'model'], ['conclusion', 'conclusion'], ['Replication', 'replication'], ['Agreement', 'agreement'], ['disagreement', 'disagreement'], ['error', 'error'], ['limit', 'limit'], ['theory', 'theory'],
+] as const
+
+const illustratedRelations = [
+  ['observation', 'suggest', 'question'], ['question', 'guide', 'hypothesis'], ['hypothesis', 'predict', 'prediction'], ['prediction', 'test', 'experiment'], ['experiment', 'measure', 'measurement'], ['experiment', 'produce', 'data'], ['data', 'analyze', 'evidence'], ['uncertainty', 'qualify', 'evidence'], ['evidence', 'support', 'explanation'], ['explanation', 'revise', 'model'], ['replication', 'test', 'experiment'], ['agreement', 'strengthen', 'evidence'], ['disagreement', 'identify', 'error'], ['theory', 'explain', 'observation'], ['model', 'guide', 'experiment'],
 ] as const
 
 export function ArticlePage() {
@@ -51,7 +66,7 @@ export function ArticlePage() {
   async function loadIllustratedExample() {
     setLoading(true); setError(''); setSelection(null)
     try {
-      const lemmas = [...new Set([...illustratedMappings.map(([, lemma]) => lemma), 'produce', 'suggest', 'explain'])]
+      const lemmas = [...new Set([...illustratedMappings.map(([, lemma]) => lemma), ...illustratedRelations.map(([, lemma]) => lemma)])]
       const resolved = await Promise.all(lemmas.map(async (lemma) => {
         const sense = (await getSenses(lemma))[0]
         if (!sense) throw new Error(`The bundled WordNet data is missing “${lemma}”.`)
@@ -64,27 +79,18 @@ export function ArticlePage() {
         if (start >= 0) annotations.push({ id: crypto.randomUUID(), text, senseId: byLemma.get(lemma)!.wordId, start, end: start + text.length })
       })
       setState((current) => {
-        const graphId = crypto.randomUUID()
-        const observation = byLemma.get('observation')!
-        const hypothesis = byLemma.get('hypothesis')!
-        const experiment = byLemma.get('experiment')!
-        const evidence = byLemma.get('evidence')!
-        const explanation = byLemma.get('explanation')!
-        const nodes = [observation, hypothesis, experiment, evidence, explanation].map((sense, index) => ({ id: crypto.randomUUID(), senseId: sense.wordId, position: { x: 80 + (index % 3) * 260, y: 80 + Math.floor(index / 3) * 180 } }))
+        const existing = current.graphs.find((graph) => graph.name === 'Scientific inquiry — complete mapped example')
+        const graphId = existing?.id ?? crypto.randomUUID()
+        const nodeLemmas = ['observation', 'question', 'hypothesis', 'prediction', 'experiment', 'measurement', 'data', 'uncertainty', 'evidence', 'explanation', 'model', 'replication', 'agreement', 'disagreement', 'error', 'theory'] as const
+        const nodes = nodeLemmas.map((lemma, index) => ({ id: crypto.randomUUID(), senseId: byLemma.get(lemma)!.wordId, position: { x: 65 + (index % 4) * 240, y: 65 + Math.floor(index / 4) * 170 } }))
         const node = (senseId: string) => nodes.find((item) => item.senseId === senseId)!.id
         const graph = {
-          id: graphId, name: 'Scientific method — mapped example', createdAt: Date.now(), updatedAt: Date.now(), nodes,
-          edges: [
-            { id: crypto.randomUUID(), source: node(observation.wordId), target: node(hypothesis.wordId), linkerSenseId: byLemma.get('suggest')!.wordId },
-            { id: crypto.randomUUID(), source: node(hypothesis.wordId), target: node(explanation.wordId), linkerSenseId: byLemma.get('explain')!.wordId },
-            { id: crypto.randomUUID(), source: node(experiment.wordId), target: node(hypothesis.wordId), linkerSenseId: byLemma.get('test')!.wordId },
-            { id: crypto.randomUUID(), source: node(experiment.wordId), target: node(evidence.wordId), linkerSenseId: byLemma.get('produce')!.wordId },
-            { id: crypto.randomUUID(), source: node(evidence.wordId), target: node(hypothesis.wordId), linkerSenseId: byLemma.get('support')!.wordId },
-          ],
+          id: graphId, name: 'Scientific inquiry — complete mapped example', createdAt: existing?.createdAt ?? Date.now(), updatedAt: Date.now(), nodes,
+          edges: illustratedRelations.map(([source, relation, target]) => ({ id: crypto.randomUUID(), source: node(byLemma.get(source)!.wordId), target: node(byLemma.get(target)!.wordId), linkerSenseId: byLemma.get(relation)!.wordId })),
         }
         const senses = [...current.senses]
         resolved.forEach(([, sense]) => { if (!senses.some((item) => item.wordId === sense.wordId)) senses.push({ ...sense, addedAt: Date.now() }) })
-        return { ...current, senses, graphs: [...current.graphs, graph], activeGraphId: graphId, article: { ...illustratedArticle, annotations } }
+        return { ...current, senses, graphs: existing ? current.graphs.map((item) => item.id === existing.id ? graph : item) : [...current.graphs, graph], activeGraphId: graphId, article: { ...illustratedArticle, annotations } }
       })
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Unable to load the illustrated example.') }
     finally { setLoading(false) }
@@ -176,7 +182,7 @@ export function ArticlePage() {
     <section className="page-heading centered"><div className="eyebrow"><BookOpen size={14} /> Article mapper</div><h1>Turn reading into structure</h1><p>Load any English Wikipedia page. Select a word or phrase, resolve its meaning, then carry it into a concept graph.</p></section>
     <div className="url-loader"><LinkIcon size={20} /><input value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && load()} placeholder="Paste an English Wikipedia URL or article title" /><button className="primary-button" disabled={loading || !input.trim()} onClick={() => load()}>{loading ? 'Loading…' : 'Load article'} <Search size={17} /></button></div>
     {error && <p className="error-message">{error}</p>}
-    <button className="illustrated-example" onClick={() => void loadIllustratedExample()} disabled={loading}><Sparkles size={19} /><span><strong>Open the fully mapped example</strong><small>A short scientific-method article with WordNet annotations and a linked concept graph.</small></span><ArrowRight size={18} /></button>
+    <button className="illustrated-example" onClick={() => void loadIllustratedExample()} disabled={loading}><Sparkles size={19} /><span><strong>Open the complete mapped example</strong><small>A six-part scientific inquiry article with 27 WordNet annotations and a 16-concept relation graph.</small></span><ArrowRight size={18} /></button>
     <div className="suggested-heading"><FlaskConical size={18} /><div><h2>Reproducible science, suggested</h2><p>A few rich places to begin.</p></div></div>
     <div className="topic-grid">{suggestedTopics.map((topic, index) => <button key={topic.title} onClick={() => { setInput(topic.title); load(topic.title) }}><span>0{index + 1}</span><h3>{topic.title}</h3><p>{topic.blurb}</p><ExternalLink size={16} /></button>)}</div>
   </div>
@@ -185,7 +191,7 @@ export function ArticlePage() {
     <aside className="article-aside">
       <button className="back-link" onClick={() => setState((current) => ({ ...current, article: undefined }))}>← Choose another article</button>
       <div className="eyebrow">Reading map</div><h1>{article.title}</h1>
-      <a href={article.url} target="_blank" rel="noreferrer">View original <ExternalLink size={13} /></a>
+      {article.url && <a href={article.url} target="_blank" rel="noreferrer">View original <ExternalLink size={13} /></a>}
       <div className="annotation-count"><Highlighter size={18} /><span><strong>{article.annotations.length}</strong> mapped passages</span></div>
       <details className="quick-entry-panel article-quick-entry">
         <summary><FilePlus2 size={14} /> Quick map passages</summary>
@@ -201,7 +207,7 @@ export function ArticlePage() {
       <Link className="primary-button" to="/graph"><Network size={17} /> Build the concept graph</Link>
     </aside>
     <article className="wikipedia-paper">
-      <header><div><span>FROM WIKIPEDIA</span><h2>{article.title}</h2></div><span className="selection-tip">Select any word or phrase to map it</span></header>
+      <header><div><span>{article.source === 'example' ? 'ILLUSTRATED EXAMPLE' : 'FROM WIKIPEDIA'}</span><h2>{article.title}</h2></div><span className="selection-tip">Select any word or phrase to map it</span></header>
       <div className="article-text" ref={articleRef} onMouseUp={captureSelection} onTouchEnd={() => window.setTimeout(captureSelection, 0)}>{content}</div>
     </article>
     {selection && <div className="selection-panel" role="dialog" aria-label="Map selected passage"><div className="selection-panel-header"><div><div className="eyebrow">Selected passage</div><q>{selection.text}</q></div><button className="icon-button" onClick={() => setSelection(null)} aria-label="Close selected passage"><X size={17} /></button></div><p>Choose the WordNet sense represented by this passage. Search is restricted to WordNet entries.</p><SenseSearch initialQuery={selection.text.toLowerCase()} onSelect={annotate} placeholder="Find its WordNet meaning…" /></div>}

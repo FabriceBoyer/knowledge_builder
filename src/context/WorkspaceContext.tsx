@@ -8,6 +8,7 @@ interface WorkspaceApi {
   state: WorkspaceState
   addSense: (sense: Sense) => void
   removeSense: (senseId: string) => void
+  updateSenseOrganization: (senseId: string, groups: string[], labels: string[]) => void
   setState: React.Dispatch<React.SetStateAction<WorkspaceState>>
   createGraph: () => void
   deleteGraph: (id: string) => void
@@ -83,6 +84,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     senses: current.senses.filter((sense) => sense.wordId !== wordId),
   })), [])
 
+  const updateSenseOrganization = useCallback((wordId: string, groups: string[], labels: string[]) => setState((current) => ({
+    ...current,
+    senses: current.senses.map((sense) => sense.wordId === wordId
+      ? { ...sense, groups: [...new Set(groups.map((item) => item.trim()).filter(Boolean))], labels: [...new Set(labels.map((item) => item.trim()).filter(Boolean))] }
+      : sense),
+  })), [])
+
   const createGraph = useCallback(() => setState((current) => {
     const now = Date.now()
     const graph: GraphDocument = { id: crypto.randomUUID(), name: `Concept ${current.graphs.length + 1}`, nodes: [], edges: [], createdAt: now, updatedAt: now }
@@ -103,7 +111,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const setArticle = useCallback((article: ArticleDocument) => setState((current) => ({ ...current, article })), [])
   const clearWorkspace = useCallback(() => setState(initialWorkspace()), [])
 
-  const value = useMemo(() => ({ state, addSense, removeSense, setState, createGraph, deleteGraph, updateGraph, setArticle, clearWorkspace, cloudStatus }), [state, addSense, removeSense, createGraph, deleteGraph, updateGraph, setArticle, clearWorkspace, cloudStatus])
+  const value = useMemo(() => ({ state, addSense, removeSense, updateSenseOrganization, setState, createGraph, deleteGraph, updateGraph, setArticle, clearWorkspace, cloudStatus }), [state, addSense, removeSense, updateSenseOrganization, createGraph, deleteGraph, updateGraph, setArticle, clearWorkspace, cloudStatus])
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>
 }
 

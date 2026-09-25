@@ -18,6 +18,8 @@ export interface Sense {
 
 export interface StoredSense extends Sense {
   addedAt: number
+  groups?: string[]
+  labels?: string[]
 }
 
 export interface ConceptNode {
@@ -55,6 +57,7 @@ export interface ArticleDocument {
   title: string
   extract: string
   annotations: ArticleAnnotation[]
+  source?: 'wikipedia' | 'example'
 }
 
 export interface WorkspaceState {
