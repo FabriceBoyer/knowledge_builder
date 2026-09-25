@@ -51,6 +51,9 @@ export function ArticlePage() {
   const [selection, setSelection] = useState<{ text: string; start: number; end: number } | null>(null)
   const [quickEntry, setQuickEntry] = useState('')
   const [quickNotice, setQuickNotice] = useState('')
+  const [annotationQuery, setAnnotationQuery] = useState('')
+  const [annotationGroup, setAnnotationGroup] = useState('')
+  const [annotationLabel, setAnnotationLabel] = useState('')
   const articleRef = useRef<HTMLDivElement>(null)
   const article = state.article
 
@@ -89,7 +92,7 @@ export function ArticlePage() {
           edges: illustratedRelations.map(([source, relation, target]) => ({ id: crypto.randomUUID(), source: node(byLemma.get(source)!.wordId), target: node(byLemma.get(target)!.wordId), linkerSenseId: byLemma.get(relation)!.wordId })),
         }
         const senses = [...current.senses]
-        resolved.forEach(([, sense]) => { if (!senses.some((item) => item.wordId === sense.wordId)) senses.push({ ...sense, addedAt: Date.now() }) })
+        resolved.forEach(([, sense]) => { if (!senses.some((item) => item.wordId === sense.wordId)) senses.push({ ...sense, addedAt: Date.now(), lastUsedAt: Date.now() }) })
         return { ...current, senses, graphs: existing ? current.graphs.map((item) => item.id === existing.id ? graph : item) : [...current.graphs, graph], activeGraphId: graphId, article: { ...illustratedArticle, annotations } }
       })
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Unable to load the illustrated example.') }
@@ -149,7 +152,7 @@ export function ArticlePage() {
         resolved.forEach(({ text, sense }) => {
           const start = findAvailablePassage(currentArticle.extract, text, annotations)
           if (start < 0) return
-          if (!allSenses.some((item) => item.wordId === sense.wordId)) allSenses.push({ ...sense, addedAt: Date.now() })
+          if (!allSenses.some((item) => item.wordId === sense.wordId)) allSenses.push({ ...sense, addedAt: Date.now(), lastUsedAt: Date.now() })
           annotations.push({ id: crypto.randomUUID(), text, senseId: sense.wordId, start, end: start + text.length })
           added += 1
         })
@@ -177,6 +180,13 @@ export function ArticlePage() {
     parts.push(article.extract.slice(cursor))
     return parts
   }, [article, state.senses])
+  const annotationGroups = useMemo(() => [...new Set(state.senses.flatMap((sense) => sense.groups ?? []))].sort(), [state.senses])
+  const annotationLabels = useMemo(() => [...new Set(state.senses.flatMap((sense) => sense.labels ?? []))].sort(), [state.senses])
+  const filteredAnnotations = useMemo(() => (article?.annotations ?? []).filter((annotation) => {
+    const sense = state.senses.find((item) => item.wordId === annotation.senseId)
+    const haystack = [annotation.text, sense?.lemma, sense?.definition, ...(sense?.groups ?? []), ...(sense?.labels ?? [])].join(' ').toLowerCase()
+    return (!annotationQuery || haystack.includes(annotationQuery.toLowerCase())) && (!annotationGroup || sense?.groups?.includes(annotationGroup)) && (!annotationLabel || sense?.labels?.includes(annotationLabel))
+  }), [annotationGroup, annotationLabel, annotationQuery, article?.annotations, state.senses])
 
   if (!article) return <div className="page-container article-landing">
     <section className="page-heading centered"><div className="eyebrow"><BookOpen size={14} /> Article mapper</div><h1>Turn reading into structure</h1><p>Load any English Wikipedia page. Select a word or phrase, resolve its meaning, then carry it into a concept graph.</p></section>
@@ -200,9 +210,10 @@ export function ArticlePage() {
         <button className="secondary-button" onClick={() => void importQuickAnnotations()} disabled={!quickEntry.trim()}>Map passages</button>
         {quickNotice && <small className={quickNotice.startsWith('Resolving') || quickNotice.includes('mapped.') ? 'quick-notice success' : 'quick-notice error'}>{quickNotice}</small>}
       </details>
-      <div className="annotation-list">{article.annotations.map((annotation) => {
+      {article.annotations.length > 0 && <div className="annotation-filters"><label><Search size={13} /><input value={annotationQuery} onChange={(event) => setAnnotationQuery(event.target.value)} placeholder="Find mapped passage or tag…" aria-label="Find mapped passages" /></label><div><select value={annotationGroup} onChange={(event) => setAnnotationGroup(event.target.value)} aria-label="Filter mapped passages by group"><option value="">All groups</option>{annotationGroups.map((group) => <option key={group}>{group}</option>)}</select><select value={annotationLabel} onChange={(event) => setAnnotationLabel(event.target.value)} aria-label="Filter mapped passages by label"><option value="">All labels</option>{annotationLabels.map((label) => <option key={label}>{label}</option>)}</select></div><small>Showing {filteredAnnotations.length} of {article.annotations.length}</small></div>}
+      <div className="annotation-list">{filteredAnnotations.map((annotation) => {
         const sense = state.senses.find((item) => item.wordId === annotation.senseId)
-        return <div key={annotation.id}><q>{annotation.text}</q><span>{sense?.lemma} · {sense?.definition}</span><button onClick={() => setArticle({ ...article, annotations: article.annotations.filter((item) => item.id !== annotation.id) })}><X size={13} /></button></div>
+        return <div key={annotation.id}><q>{annotation.text}</q><span>{sense?.lemma} · {sense?.definition}</span>{(sense?.groups?.length || sense?.labels?.length) ? <span className="annotation-tags">{[...(sense.groups ?? []).map((tag) => `#${tag}`), ...(sense.labels ?? [])].slice(0, 3).join(' · ')}</span> : null}<button onClick={() => setArticle({ ...article, annotations: article.annotations.filter((item) => item.id !== annotation.id) })}><X size={13} /></button></div>
       })}</div>
       <Link className="primary-button" to="/graph"><Network size={17} /> Build the concept graph</Link>
     </aside>

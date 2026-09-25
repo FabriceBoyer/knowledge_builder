@@ -18,6 +18,7 @@ export interface Sense {
 
 export interface StoredSense extends Sense {
   addedAt: number
+  lastUsedAt?: number
   groups?: string[]
   labels?: string[]
 }

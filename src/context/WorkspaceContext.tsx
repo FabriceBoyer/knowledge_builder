@@ -75,8 +75,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, [isLocalOnly, state, ownerId])
 
   const addSense = useCallback((sense: Sense) => setState((current) => {
-    if (current.senses.some((item) => item.wordId === sense.wordId)) return current
-    return { ...current, senses: [...current.senses, { ...sense, addedAt: Date.now() }] }
+    const now = Date.now()
+    const existing = current.senses.find((item) => item.wordId === sense.wordId)
+    if (existing) return { ...current, senses: current.senses.map((item) => item.wordId === sense.wordId ? { ...item, lastUsedAt: now } : item) }
+    return { ...current, senses: [...current.senses, { ...sense, addedAt: now, lastUsedAt: now }] }
   }), [])
 
   const removeSense = useCallback((wordId: string) => setState((current) => ({

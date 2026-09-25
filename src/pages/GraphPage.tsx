@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import { Background, ConnectionMode, Controls, Handle, MiniMap, Position, ReactFlow, applyNodeChanges, reconnectEdge, type Connection, type Edge, type Node, type NodeChange, type NodeProps } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { ArrowRight, ChevronDown, CirclePlus, Columns3, FilePlus2, LayoutTemplate, Network, Pencil, Plus, Share2, Trash2, X } from 'lucide-react'
+import { ArrowRight, ChevronDown, CirclePlus, Columns3, FilePlus2, LayoutTemplate, Network, Pencil, Plus, Search, Share2, Trash2, X } from 'lucide-react'
 import { SensePill } from '../components/SensePill'
 import { SenseSearch } from '../components/SenseSearch'
 import { useWorkspace } from '../context/WorkspaceContext'
@@ -105,8 +105,20 @@ export function GraphPage() {
   const [quickEntry, setQuickEntry] = useState('')
   const [quickNotice, setQuickNotice] = useState('')
   const [layoutAlgorithm, setLayoutAlgorithm] = useState<LayoutAlgorithm>('manual')
+  const [paletteQuery, setPaletteQuery] = useState('')
+  const [paletteGroup, setPaletteGroup] = useState('')
+  const [paletteLabel, setPaletteLabel] = useState('')
+  const [statementQuery, setStatementQuery] = useState('')
+  const [statementGroup, setStatementGroup] = useState('')
+  const [statementLabel, setStatementLabel] = useState('')
   const compactCanvas = window.matchMedia('(max-width: 620px)').matches
   const senses = useMemo(() => new Map(state.senses.map((sense) => [sense.wordId, sense])), [state.senses])
+  const paletteGroups = useMemo(() => [...new Set(state.senses.flatMap((sense) => sense.groups ?? []))].sort(), [state.senses])
+  const paletteLabels = useMemo(() => [...new Set(state.senses.flatMap((sense) => sense.labels ?? []))].sort(), [state.senses])
+  const paletteSenses = useMemo(() => state.senses.filter((sense) => {
+    const haystack = [sense.lemma, sense.definition, ...(sense.words ?? []), ...(sense.groups ?? []), ...(sense.labels ?? [])].join(' ').toLowerCase()
+    return (!paletteGroup || sense.groups?.includes(paletteGroup)) && (!paletteLabel || sense.labels?.includes(paletteLabel)) && (!paletteQuery || haystack.includes(paletteQuery.toLowerCase()))
+  }).sort((a, b) => (b.lastUsedAt ?? b.addedAt) - (a.lastUsedAt ?? a.addedAt)), [paletteGroup, paletteLabel, paletteQuery, state.senses])
   const persist = useCallback((next: Partial<GraphDocument>) => updateGraph({ ...graph, ...next }), [graph, updateGraph])
   const nodeLabel = useCallback((nodeId: string) => senses.get(graph.nodes.find((node) => node.id === nodeId)?.senseId ?? '')?.lemma ?? 'Missing sense', [graph.nodes, senses])
 
@@ -219,7 +231,7 @@ export function GraphPage() {
         const nodes = [...active.nodes]
         const edges = [...active.edges]
         const ensureSense = (sense: Sense) => {
-          if (!allSenses.some((item) => item.wordId === sense.wordId)) allSenses.push({ ...sense, addedAt: Date.now() })
+          if (!allSenses.some((item) => item.wordId === sense.wordId)) allSenses.push({ ...sense, addedAt: Date.now(), lastUsedAt: Date.now() })
         }
         const ensureNode = (sense: Sense) => {
           ensureSense(sense)
@@ -258,6 +270,14 @@ export function GraphPage() {
   const editingEntitySense = senses.get(graph.nodes.find((node) => node.id === entityEditor)?.senseId ?? '')
   const linkedNodeIds = new Set(graph.edges.flatMap((edge) => [edge.source, edge.target]))
   const isolatedNodes = graph.nodes.filter((node) => !linkedNodeIds.has(node.id))
+  const filteredEdges = graph.edges.filter((edge) => {
+    const source = senses.get(graph.nodes.find((node) => node.id === edge.source)?.senseId ?? '')
+    const target = senses.get(graph.nodes.find((node) => node.id === edge.target)?.senseId ?? '')
+    const relation = senses.get(edge.linkerSenseId)
+    const related = [source, target, relation].filter(Boolean) as StoredSense[]
+    const haystack = related.flatMap((sense) => [sense.lemma, sense.definition, ...(sense.groups ?? []), ...(sense.labels ?? [])]).join(' ').toLowerCase()
+    return (!statementQuery || haystack.includes(statementQuery.toLowerCase())) && (!statementGroup || related.some((sense) => sense.groups?.includes(statementGroup))) && (!statementLabel || related.some((sense) => sense.labels?.includes(statementLabel)))
+  })
 
   return <div className={`graph-page view-${view}`}>
     <aside className="graph-sidebar">
@@ -286,12 +306,13 @@ export function GraphPage() {
         <button className="secondary-button" onClick={() => void importQuickEntries()} disabled={!quickEntry.trim()}>Add entries</button>
         {quickNotice && <small className={quickNotice.startsWith('Resolving') || quickNotice.includes('added.') ? 'quick-notice success' : 'quick-notice error'}>{quickNotice}</small>}
       </details>
-      <div className="sidebar-label">Sense palette <span>{state.senses.length}</span></div>
+      <div className="sidebar-label">Sense palette <span>{paletteSenses.length}/{state.senses.length}</span></div>
+      <div className="palette-tools"><label><Search size={13} /><input value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} placeholder="Search words or tags…" aria-label="Filter sense palette" /></label><div><select value={paletteGroup} onChange={(event) => setPaletteGroup(event.target.value)} aria-label="Filter palette by group"><option value="">All groups</option>{paletteGroups.map((group) => <option key={group}>{group}</option>)}</select><select value={paletteLabel} onChange={(event) => setPaletteLabel(event.target.value)} aria-label="Filter palette by label"><option value="">All labels</option>{paletteLabels.map((label) => <option key={label}>{label}</option>)}</select></div></div>
       <div className="node-palette">
-        {state.senses.map((sense) => <SensePill key={sense.wordId} sense={sense} onClick={() => addNode(sense.wordId)} />)}
-        {!state.senses.length && <p className="muted">Collect senses in the Sense lab, then return here to compose them.</p>}
+        {paletteSenses.map((sense) => <SensePill key={sense.wordId} sense={sense} onClick={() => { addSense(sense); addNode(sense.wordId) }} />)}
+        {!state.senses.length ? <p className="muted">Collect senses in the Sense lab, then return here to compose them.</p> : !paletteSenses.length && <p className="muted">No senses match these filters.</p>}
       </div>
-      <div className="sidebar-search"><SenseSearch compact onSelect={(sense) => { addSense(sense); addNode(sense.wordId) }} placeholder="Find another entity…" /></div>
+      <div className="sidebar-search"><SenseSearch compact keepFocusAfterSelect onSelect={(sense) => { addSense(sense); addNode(sense.wordId) }} placeholder="Find another entity…" /></div>
     </aside>
 
     {view === 'canvas' ? <section className="graph-canvas">
@@ -301,15 +322,16 @@ export function GraphPage() {
       </ReactFlow>
     </section> : <section className="column-editor">
       <header><div><div className="eyebrow"><Columns3 size={14} /> Text editor</div><h2>{graph.name}</h2><p>Edit the same semantic model as readable statements. No canvas, dragging, or zooming required.</p></div><span>{graph.nodes.length} entities · {graph.edges.length} relationships</span></header>
+      {graph.edges.length > 0 && <div className="column-list-tools"><label><Search size={14} /><input value={statementQuery} onChange={(event) => setStatementQuery(event.target.value)} placeholder="Search entities, relations, or tags…" aria-label="Search relationships" /></label><select value={statementGroup} onChange={(event) => setStatementGroup(event.target.value)} aria-label="Filter relationships by group"><option value="">All groups</option>{paletteGroups.map((group) => <option key={group}>{group}</option>)}</select><select value={statementLabel} onChange={(event) => setStatementLabel(event.target.value)} aria-label="Filter relationships by label"><option value="">All labels</option>{paletteLabels.map((label) => <option key={label}>{label}</option>)}</select><small>Showing {filteredEdges.length} of {graph.edges.length}</small></div>}
       <div className="statement-table" role="table" aria-label="Semantic relationships">
         <div className="statement-head" role="row"><span>Source entity</span><span>Relationship</span><span>Target entity</span><span>Actions</span></div>
-        {graph.edges.map((edge) => <div className="statement-row" role="row" key={edge.id}>
+        {filteredEdges.map((edge) => <div className="statement-row" role="row" key={edge.id}>
           <button className="entity-cell" onClick={() => setEntityEditor(edge.source)}><strong>{nodeLabel(edge.source)}</strong><small>{senses.get(graph.nodes.find((node) => node.id === edge.source)?.senseId ?? '')?.definition}</small></button>
           <button className="relation-cell" onClick={() => setLinkEditor({ mode: 'edit', edgeId: edge.id })}><ArrowRight size={14} /><strong>{senses.get(edge.linkerSenseId)?.lemma ?? 'Missing relation'}</strong><small>{senses.get(edge.linkerSenseId)?.definition}</small></button>
           <button className="entity-cell" onClick={() => setEntityEditor(edge.target)}><strong>{nodeLabel(edge.target)}</strong><small>{senses.get(graph.nodes.find((node) => node.id === edge.target)?.senseId ?? '')?.definition}</small></button>
           <div className="statement-actions"><button onClick={() => setLinkEditor({ mode: 'edit', edgeId: edge.id })} aria-label="Edit relationship"><Pencil size={15} /></button><button className="danger" onClick={() => deleteLink(edge.id)} aria-label="Delete relationship"><Trash2 size={15} /></button></div>
         </div>)}
-        {!graph.edges.length && <div className="column-empty">No relationships yet. Add two entities, then create a relationship from the left panel.</div>}
+        {!graph.edges.length ? <div className="column-empty">No relationships yet. Add two entities, then create a relationship from the left panel.</div> : !filteredEdges.length && <div className="column-empty">No relationships match these filters.</div>}
       </div>
       {!!isolatedNodes.length && <div className="isolated-section"><div className="sidebar-label">Unlinked entities <span>{isolatedNodes.length}</span></div><div className="isolated-grid">{isolatedNodes.map((node) => { const sense = senses.get(node.senseId); return <article key={node.id}><span className={`pos pos-${sense?.pos ?? 'n'}`}>{sense ? posLabel[sense.pos][0] : '?'}</span><div><strong>{sense?.lemma ?? 'Missing sense'}</strong><small>{sense?.definition}</small></div><button onClick={() => setEntityEditor(node.id)} aria-label={`Edit ${sense?.lemma}`}><Pencil size={15} /></button><button onClick={() => deleteEntity(node.id)} aria-label={`Delete ${sense?.lemma}`}><Trash2 size={15} /></button></article> })}</div></div>}
     </section>}
