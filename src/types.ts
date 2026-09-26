@@ -34,6 +34,7 @@ export interface ConceptEdge {
   source: string
   target: string
   linkerSenseId: string
+  justification?: string
 }
 
 export interface GraphDocument {

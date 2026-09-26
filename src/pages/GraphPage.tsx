@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Background, ConnectionMode, Controls, Handle, MiniMap, Position, ReactFlow, applyNodeChanges, reconnectEdge, type Connection, type Edge, type Node, type NodeChange, type NodeProps } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { ArrowRight, BookOpenText, ChevronDown, CirclePlus, Columns3, FilePlus2, LayoutTemplate, Network, Pencil, Plus, Search, Share2, Trash2, X } from 'lucide-react'
@@ -36,6 +36,15 @@ function SenseWord({ sense }: { sense?: StoredSense }) {
   if (!sense) return <span className="sense-word missing">missing sense</span>
   const tooltip = `${sense.definition}${sense.examples[0] ? `\nExample: “${sense.examples[0]}”` : ''}`
   return <abbr className={`sense-word pos-${sense.pos}`} title={tooltip}>{sense.lemma}</abbr>
+}
+
+function EntityPicker({ choices, value, onChange, label }: { choices: Array<{ id: string; sense?: StoredSense }>; value: string; onChange: (id: string) => void; label: string }) {
+  const selected = choices.find((choice) => choice.id === value)
+  const [query, setQuery] = useState(selected?.sense?.lemma ?? '')
+  const [open, setOpen] = useState(false)
+  useEffect(() => { if (value) setQuery(selected?.sense?.lemma ?? ''); else if (!open) setQuery('') }, [open, selected?.sense?.lemma, value])
+  const matches = choices.filter((choice) => [choice.sense?.lemma, choice.sense?.definition, ...(choice.sense?.groups ?? []), ...(choice.sense?.labels ?? [])].join(' ').toLowerCase().includes(query.toLowerCase())).slice(0, 8)
+  return <label className="entity-picker">{label}<div><Search size={12} /><input value={query} onFocus={() => setOpen(true)} onBlur={() => window.setTimeout(() => setOpen(false), 120)} onChange={(event) => { setQuery(event.target.value); onChange(''); setOpen(true) }} placeholder="Search concepts or tags…" /></div>{open && <ul>{matches.map((choice) => <li key={choice.id}><button onMouseDown={(event) => event.preventDefault()} onClick={() => { onChange(choice.id); setQuery(choice.sense?.lemma ?? ''); setOpen(false) }}><strong>{choice.sense?.lemma ?? 'Missing sense'}</strong><small>{choice.sense?.definition}</small></button></li>)}{!matches.length && <li className="muted">No concept matches.</li>}</ul>}</label>
 }
 
 function hierarchyPositions(graph: GraphDocument, horizontal: boolean) {
@@ -105,6 +114,8 @@ export function GraphPage() {
   const graph = state.graphs.find((item) => item.id === state.activeGraphId) ?? state.graphs[0]
   const [view, setView] = useState<EditorView>(() => window.matchMedia('(max-width: 620px)').matches ? 'columns' : 'canvas')
   const [linkEditor, setLinkEditor] = useState<LinkEditor | null>(null)
+  const [linkJustification, setLinkJustification] = useState('')
+  const [linkSenseQuery, setLinkSenseQuery] = useState('')
   const [entityEditor, setEntityEditor] = useState<string | null>(null)
   const [formSource, setFormSource] = useState('')
   const [formTarget, setFormTarget] = useState('')
@@ -119,7 +130,7 @@ export function GraphPage() {
   const [statementLabel, setStatementLabel] = useState('')
   const [columnSource, setColumnSource] = useState('')
   const [columnTarget, setColumnTarget] = useState('')
-  const [columnNodeQuery, setColumnNodeQuery] = useState('')
+  const [columnJustification, setColumnJustification] = useState('')
   const [narrativeQuery, setNarrativeQuery] = useState('')
   const compactCanvas = window.matchMedia('(max-width: 620px)').matches
   const senses = useMemo(() => new Map(state.senses.map((sense) => [sense.wordId, sense])), [state.senses])
@@ -131,10 +142,8 @@ export function GraphPage() {
   }).sort((a, b) => (b.lastUsedAt ?? b.addedAt) - (a.lastUsedAt ?? a.addedAt)), [paletteGroup, paletteLabel, paletteQuery, state.senses])
   const persist = useCallback((next: Partial<GraphDocument>) => updateGraph({ ...graph, ...next }), [graph, updateGraph])
   const nodeLabel = useCallback((nodeId: string) => senses.get(graph.nodes.find((node) => node.id === nodeId)?.senseId ?? '')?.lemma ?? 'Missing sense', [graph.nodes, senses])
-  const columnNodes = useMemo(() => graph.nodes.filter((node) => {
-    const sense = senses.get(node.senseId)
-    return !columnNodeQuery || [sense?.lemma, sense?.definition, ...(sense?.groups ?? []), ...(sense?.labels ?? [])].join(' ').toLowerCase().includes(columnNodeQuery.toLowerCase())
-  }), [columnNodeQuery, graph.nodes, senses])
+  const entityChoices = useMemo(() => graph.nodes.map((node) => ({ id: node.id, sense: senses.get(node.senseId) })), [graph.nodes, senses])
+  const matchingLinkSenses = useMemo(() => state.senses.filter((sense) => [sense.lemma, sense.definition, ...(sense.groups ?? []), ...(sense.labels ?? [])].join(' ').toLowerCase().includes(linkSenseQuery.toLowerCase())).sort((a, b) => (b.lastUsedAt ?? b.addedAt) - (a.lastUsedAt ?? a.addedAt)).slice(0, 8), [linkSenseQuery, state.senses])
 
   const deleteEntity = useCallback((nodeId: string) => {
     const linked = graph.edges.filter((edge) => edge.source === nodeId || edge.target === nodeId).length
@@ -173,6 +182,19 @@ export function GraphPage() {
     persist({ nodes: [...graph.nodes, { id: crypto.randomUUID(), senseId, position: { x: 100 + (graph.nodes.length % 3) * 240, y: 80 + Math.floor(graph.nodes.length / 3) * 150 } }] })
   }
 
+  function openLinkCreator(connection: Connection) {
+    setLinkJustification('')
+    setLinkSenseQuery('')
+    setLinkEditor({ mode: 'create', connection })
+  }
+
+  function openLinkEditor(edgeId: string) {
+    const edge = graph.edges.find((item) => item.id === edgeId)
+    setLinkJustification(edge?.justification ?? '')
+    setLinkSenseQuery('')
+    setLinkEditor({ mode: 'edit', edgeId })
+  }
+
   function applyLayout() {
     if (layoutAlgorithm === 'manual') return
     const positions = layoutAlgorithm === 'hierarchy-horizontal' ? hierarchyPositions(graph, true)
@@ -198,28 +220,35 @@ export function GraphPage() {
     if (linkEditor.mode === 'edit') {
       persist({ edges: graph.edges.map((edge) => edge.id === linkEditor.edgeId ? { ...edge, linkerSenseId: sense.wordId } : edge) })
     } else if (linkEditor.connection.source && linkEditor.connection.target) {
-      const semantic: ConceptEdge = { id: crypto.randomUUID(), source: linkEditor.connection.source, target: linkEditor.connection.target, linkerSenseId: sense.wordId }
+      const semantic: ConceptEdge = { id: crypto.randomUUID(), source: linkEditor.connection.source, target: linkEditor.connection.target, linkerSenseId: sense.wordId, justification: linkJustification.trim() || undefined }
       persist({ edges: [...graph.edges, semantic] })
       setFormSource('')
       setFormTarget('')
     }
     setLinkEditor(null)
+    setLinkJustification('')
   }
 
   function addColumnLink(sense: Sense) {
     if (!columnSource || !columnTarget || columnSource === columnTarget) return
     addSense(sense)
     if (!graph.edges.some((edge) => edge.source === columnSource && edge.target === columnTarget && edge.linkerSenseId === sense.wordId)) {
-      persist({ edges: [...graph.edges, { id: crypto.randomUUID(), source: columnSource, target: columnTarget, linkerSenseId: sense.wordId }] })
+      persist({ edges: [...graph.edges, { id: crypto.randomUUID(), source: columnSource, target: columnTarget, linkerSenseId: sense.wordId, justification: columnJustification.trim() || undefined }] })
     }
     setColumnSource('')
     setColumnTarget('')
+    setColumnJustification('')
   }
 
   function deleteLink(edgeId: string) {
     if (!window.confirm('Delete this semantic relationship?')) return
     persist({ edges: graph.edges.filter((edge) => edge.id !== edgeId) })
     setLinkEditor(null)
+  }
+
+  function updateLinkJustification(value: string) {
+    setLinkJustification(value)
+    if (linkEditor?.mode === 'edit') persist({ edges: graph.edges.map((edge) => edge.id === linkEditor.edgeId ? { ...edge, justification: value.trim() || undefined } : edge) })
   }
 
   function removeGraph() {
@@ -327,7 +356,7 @@ export function GraphPage() {
           <select aria-label="Link source" value={formSource} onChange={(event) => setFormSource(event.target.value)}><option value="">From…</option>{graph.nodes.map((node) => <option key={node.id} value={node.id}>{nodeLabel(node.id)}</option>)}</select>
           <span aria-hidden="true">→</span>
           <select aria-label="Link target" value={formTarget} onChange={(event) => setFormTarget(event.target.value)}><option value="">To…</option>{graph.nodes.map((node) => <option key={node.id} value={node.id}>{nodeLabel(node.id)}</option>)}</select>
-          <button className="primary-button" disabled={!formSource || !formTarget || formSource === formTarget} onClick={() => setLinkEditor({ mode: 'create', connection: { source: formSource, target: formTarget, sourceHandle: null, targetHandle: null } })}>Link</button>
+          <button className="primary-button" disabled={!formSource || !formTarget || formSource === formTarget} onClick={() => openLinkCreator({ source: formSource, target: formTarget, sourceHandle: null, targetHandle: null })}>Link</button>
         </div>
       </div>
       <details className="quick-entry-panel">
@@ -348,27 +377,27 @@ export function GraphPage() {
 
     {view === 'canvas' ? <section className="graph-canvas">
       <div className="canvas-hint"><CirclePlus size={15} /> Drag to connect · use the node actions to edit or delete.</div>
-      <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={onNodesChange} onConnect={(connection) => setLinkEditor({ mode: 'create', connection })} onReconnect={onReconnect} onNodeDoubleClick={(_, node) => setEntityEditor(node.id)} onEdgeDoubleClick={(_, edge) => setLinkEditor({ mode: 'edit', edgeId: edge.id })} connectionMode={ConnectionMode.Strict} edgesReconnectable fitView fitViewOptions={{ minZoom: compactCanvas ? 1 : 0.1, maxZoom: 1 }} minZoom={compactCanvas ? 0.75 : 0.5} deleteKeyCode={null}>
+      <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={onNodesChange} onConnect={openLinkCreator} onReconnect={onReconnect} onNodeDoubleClick={(_, node) => setEntityEditor(node.id)} onEdgeDoubleClick={(_, edge) => openLinkEditor(edge.id)} connectionMode={ConnectionMode.Strict} edgesReconnectable fitView fitViewOptions={{ minZoom: compactCanvas ? 1 : 0.1, maxZoom: 1 }} minZoom={compactCanvas ? 0.75 : 0.5} deleteKeyCode={null}>
         <Background gap={24} size={1} /><Controls /><MiniMap pannable zoomable nodeColor={miniMapColor} nodeStrokeColor="#101815" nodeStrokeWidth={2} nodeBorderRadius={5} bgColor="#18221f" maskColor="rgba(16, 24, 21, 0.65)" maskStrokeColor="#ff8066" ariaLabel="Graph overview: drag or click to navigate the canvas" />
       </ReactFlow>
     </section> : view === 'columns' ? <section className="column-editor">
       <header><div><div className="eyebrow"><Columns3 size={14} /> Text editor</div><h2>{graph.name}</h2><p>Edit the same semantic model as readable statements. No canvas, dragging, or zooming required.</p></div><span>{graph.nodes.length} entities · {graph.edges.length} relationships</span></header>
-      <section className="column-composer" aria-label="Create a relationship in columns view"><div><div className="eyebrow"><CirclePlus size={13} /> Add directly here</div><h3>Write a new relationship</h3><p>Pick the two concepts, then search WordNet for the precise linking sense. The relationship is created immediately.</p></div><div className="column-composer-fields"><label className="column-node-filter"><Search size={12} /> Find a concept<input value={columnNodeQuery} onChange={(event) => setColumnNodeQuery(event.target.value)} placeholder="Word, definition, or tag…" /></label><label>From<select value={columnSource} onChange={(event) => setColumnSource(event.target.value)}><option value="">Choose a concept…</option>{columnNodes.map((node) => <option key={node.id} value={node.id}>{nodeLabel(node.id)}</option>)}</select></label><span>→</span><label>To<select value={columnTarget} onChange={(event) => setColumnTarget(event.target.value)}><option value="">Choose a concept…</option>{columnNodes.map((node) => <option key={node.id} value={node.id}>{nodeLabel(node.id)}</option>)}</select></label></div><div className="column-link-search"><SenseSearch compact keepFocusAfterSelect disabled={!columnSource || !columnTarget || columnSource === columnTarget} onSelect={addColumnLink} placeholder={columnSource && columnTarget && columnSource !== columnTarget ? 'Search the linking sense…' : 'Choose two concepts first'} /></div>{(!columnSource || !columnTarget || columnSource === columnTarget) && <small className="column-composer-hint">Choose two different concepts to enable direct linking.</small>}</section>
+      <section className="column-composer" aria-label="Create a relationship in columns view"><div><div className="eyebrow"><CirclePlus size={13} /> Add directly here</div><h3>Write a new relationship</h3><p>Search the two existing concepts, then select the precise WordNet linking sense. A source note can travel with the relationship.</p></div><div className="column-composer-fields"><EntityPicker label="From" choices={entityChoices} value={columnSource} onChange={setColumnSource} /><span>→</span><EntityPicker label="To" choices={entityChoices} value={columnTarget} onChange={setColumnTarget} /></div><label className="column-justification">Source / justification<input value={columnJustification} onChange={(event) => setColumnJustification(event.target.value)} placeholder="e.g. DOI, article passage, observation…" /></label><div className="column-link-search"><SenseSearch compact keepFocusAfterSelect disabled={!columnSource || !columnTarget || columnSource === columnTarget} onSelect={addColumnLink} placeholder={columnSource && columnTarget && columnSource !== columnTarget ? 'Search the linking sense…' : 'Choose two concepts first'} /></div>{(!columnSource || !columnTarget || columnSource === columnTarget) && <small className="column-composer-hint">Choose two different concepts to enable direct linking.</small>}</section>
       {graph.edges.length > 0 && <div className="column-list-tools"><label><Search size={14} /><input value={statementQuery} onChange={(event) => setStatementQuery(event.target.value)} placeholder="Search entities, relations, or tags…" aria-label="Search relationships" /></label><select value={statementGroup} onChange={(event) => setStatementGroup(event.target.value)} aria-label="Filter relationships by group"><option value="">All groups</option>{paletteGroups.map((group) => <option key={group}>{group}</option>)}</select><select value={statementLabel} onChange={(event) => setStatementLabel(event.target.value)} aria-label="Filter relationships by label"><option value="">All labels</option>{paletteLabels.map((label) => <option key={label}>{label}</option>)}</select><small>Showing {filteredEdges.length} of {graph.edges.length}</small></div>}
       <div className="statement-table" role="table" aria-label="Semantic relationships">
         <div className="statement-head" role="row"><span>Source entity</span><span>Relationship</span><span>Target entity</span><span>Actions</span></div>
         {filteredEdges.map((edge) => <div className="statement-row" role="row" key={edge.id}>
           <button className="entity-cell" onClick={() => setEntityEditor(edge.source)}><strong>{nodeLabel(edge.source)}</strong><small>{senses.get(graph.nodes.find((node) => node.id === edge.source)?.senseId ?? '')?.definition}</small></button>
-          <button className="relation-cell" onClick={() => setLinkEditor({ mode: 'edit', edgeId: edge.id })}><ArrowRight size={14} /><strong>{senses.get(edge.linkerSenseId)?.lemma ?? 'Missing relation'}</strong><small>{senses.get(edge.linkerSenseId)?.definition}</small></button>
+          <button className="relation-cell" onClick={() => openLinkEditor(edge.id)}><ArrowRight size={14} /><strong>{senses.get(edge.linkerSenseId)?.lemma ?? 'Missing relation'}</strong><small>{edge.justification ? `Source: ${edge.justification}` : senses.get(edge.linkerSenseId)?.definition}</small></button>
           <button className="entity-cell" onClick={() => setEntityEditor(edge.target)}><strong>{nodeLabel(edge.target)}</strong><small>{senses.get(graph.nodes.find((node) => node.id === edge.target)?.senseId ?? '')?.definition}</small></button>
-          <div className="statement-actions"><button onClick={() => setLinkEditor({ mode: 'edit', edgeId: edge.id })} aria-label="Edit relationship"><Pencil size={15} /></button><button className="danger" onClick={() => deleteLink(edge.id)} aria-label="Delete relationship"><Trash2 size={15} /></button></div>
+          <div className="statement-actions"><button onClick={() => openLinkEditor(edge.id)} aria-label="Edit relationship"><Pencil size={15} /></button><button className="danger" onClick={() => deleteLink(edge.id)} aria-label="Delete relationship"><Trash2 size={15} /></button></div>
         </div>)}
         {!graph.edges.length ? <div className="column-empty">No relationships yet. Add two entities, then create a relationship from the left panel.</div> : !filteredEdges.length && <div className="column-empty">No relationships match these filters.</div>}
       </div>
       {!!isolatedNodes.length && <div className="isolated-section"><div className="sidebar-label">Unlinked entities <span>{isolatedNodes.length}</span></div><div className="isolated-grid">{isolatedNodes.map((node) => { const sense = senses.get(node.senseId); return <article key={node.id}><span className={`pos pos-${sense?.pos ?? 'n'}`}>{sense ? posLabel[sense.pos][0] : '?'}</span><div><strong>{sense?.lemma ?? 'Missing sense'}</strong><small>{sense?.definition}</small></div><button onClick={() => setEntityEditor(node.id)} aria-label={`Edit ${sense?.lemma}`}><Pencil size={15} /></button><button onClick={() => deleteEntity(node.id)} aria-label={`Delete ${sense?.lemma}`}><Trash2 size={15} /></button></article> })}</div></div>}
-    </section> : <section className="narrative-editor"><header><div><div className="eyebrow"><BookOpenText size={14} /> Structured reading</div><h2>{graph.name}</h2><p>A readable rendering of the concept graph. Every underlined term retains its WordNet meaning on hover, while relation chips keep the graph structure visible.</p></div><span>{graph.nodes.length} concepts · {graph.edges.length} relations</span></header>{graph.edges.length > 0 && <label className="narrative-search"><Search size={15} /><input value={narrativeQuery} onChange={(event) => setNarrativeQuery(event.target.value)} placeholder="Search this reading by concept or relation…" /></label>}<div className="narrative-paper">{narrativeSources.length ? narrativeSources.map((sourceNode) => { const source = senses.get(sourceNode.senseId); const outgoing = narrativeEdges.filter((edge) => edge.source === sourceNode.id); return <section key={sourceNode.id}><h3><SenseWord sense={source} /> as a starting concept</h3><p>{outgoing.map((edge, index) => { const relation = senses.get(edge.linkerSenseId); const target = senses.get(graph.nodes.find((node) => node.id === edge.target)?.senseId ?? ''); return <span className="narrative-statement" key={edge.id}>{index === 0 ? <>The concept of <SenseWord sense={source} /> <span className="relation-chip"><SenseWord sense={relation} /> <ArrowRight size={12} /></span> <SenseWord sense={target} />.</> : <> It also <span className="relation-chip"><SenseWord sense={relation} /> <ArrowRight size={12} /></span> <SenseWord sense={target} />.</>}</span> })}</p></section> }) : <div className="column-empty">{graph.edges.length ? 'No relationships match this reading search.' : 'Add relationships in Canvas or Columns to generate a structured reading.'}</div>}</div>{isolatedNodes.length > 0 && <aside className="narrative-unlinked"><strong>Unlinked concepts</strong><span>{isolatedNodes.map((node) => <SenseWord key={node.id} sense={senses.get(node.senseId)} />)}</span></aside>}</section>}
+    </section> : <section className="narrative-editor"><header><div><div className="eyebrow"><BookOpenText size={14} /> Structured reading</div><h2>{graph.name}</h2><p>A readable rendering of the concept graph. Every underlined term retains its WordNet meaning on hover, while relation chips keep the graph structure visible.</p></div><span>{graph.nodes.length} concepts · {graph.edges.length} relations</span></header>{graph.edges.length > 0 && <label className="narrative-search"><Search size={15} /><input value={narrativeQuery} onChange={(event) => setNarrativeQuery(event.target.value)} placeholder="Search this reading by concept or relation…" /></label>}<div className="narrative-paper">{narrativeSources.length ? narrativeSources.map((sourceNode) => { const source = senses.get(sourceNode.senseId); const outgoing = narrativeEdges.filter((edge) => edge.source === sourceNode.id); return <section key={sourceNode.id}><h3><SenseWord sense={source} /> as a starting concept</h3><p>{outgoing.map((edge, index) => { const relation = senses.get(edge.linkerSenseId); const target = senses.get(graph.nodes.find((node) => node.id === edge.target)?.senseId ?? ''); return <span className="narrative-statement" key={edge.id}>{index === 0 ? <>The concept of <SenseWord sense={source} /> <span className="relation-chip"><SenseWord sense={relation} /> <ArrowRight size={12} /></span> <SenseWord sense={target} />.</> : <> It also <span className="relation-chip"><SenseWord sense={relation} /> <ArrowRight size={12} /></span> <SenseWord sense={target} />.</>}{edge.justification && <em className="narrative-source">Source: {edge.justification}</em>}</span> })}</p></section> }) : <div className="column-empty">{graph.edges.length ? 'No relationships match this reading search.' : 'Add relationships in Canvas or Columns to generate a structured reading.'}</div>}</div>{isolatedNodes.length > 0 && <aside className="narrative-unlinked"><strong>Unlinked concepts</strong><span>{isolatedNodes.map((node) => <SenseWord key={node.id} sense={senses.get(node.senseId)} />)}</span></aside>}</section>}
 
     {entityEditor && <div className="modal-backdrop"><div className="modal-card" role="dialog" aria-label="Edit entity"><button className="modal-close" onClick={() => setEntityEditor(null)} aria-label="Close entity editor"><X /></button><div className="eyebrow">Entity</div><h2>Edit “{editingEntitySense?.lemma ?? 'missing sense'}”</h2><p>Choose a different WordNet sense while keeping its relationships, or delete this entity and all of its relationships.</p><SenseSearch initialQuery={editingEntitySense?.lemma ?? ''} onSelect={replaceEntity} placeholder="Find a replacement sense…" /><button className="delete-link-button" onClick={() => deleteEntity(entityEditor)}><Trash2 size={16} /> Delete entity</button></div></div>}
-    {linkEditor && <div className="modal-backdrop"><div className="modal-card" role="dialog" aria-label={linkEditor.mode === 'edit' ? 'Edit semantic link' : 'Create semantic link'}><button className="modal-close" onClick={() => setLinkEditor(null)} aria-label="Close link editor"><X /></button><div className="eyebrow">Semantic glue</div><h2>{linkEditor.mode === 'edit' ? 'Edit this relationship' : 'How are these ideas connected?'}</h2><p>{linkEditor.mode === 'edit' ? `The current linking sense is “${editingSense?.lemma ?? 'unknown'}”. Choose a replacement or delete the relationship.` : 'Choose another precise sense to label this relationship.'}</p><SenseSearch initialQuery={linkEditor.mode === 'edit' ? editingSense?.lemma ?? '' : ''} onSelect={linkWith} placeholder="Search for a linking sense…" />{linkEditor.mode === 'edit' && <button className="delete-link-button" onClick={() => deleteLink(linkEditor.edgeId)}><Trash2 size={16} /> Delete relationship</button>}</div></div>}
+    {linkEditor && <div className="modal-backdrop"><div className="modal-card" role="dialog" aria-label={linkEditor.mode === 'edit' ? 'Edit semantic link' : 'Create semantic link'}><button className="modal-close" onClick={() => setLinkEditor(null)} aria-label="Close link editor"><X /></button><div className="eyebrow">Semantic glue</div><h2>{linkEditor.mode === 'edit' ? 'Edit this relationship' : 'How are these ideas connected?'}</h2><p>{linkEditor.mode === 'edit' ? `The current linking sense is “${editingSense?.lemma ?? 'unknown'}”. Select an existing sense, add a new one, or update the source note.` : 'Search your existing senses first, or add a new precise WordNet sense.'}</p><label className="link-justification">Source / justification<textarea value={linkJustification} onChange={(event) => updateLinkJustification(event.target.value)} placeholder="e.g. DOI, paper section, article passage, observation…" /></label><div className="existing-link-senses"><label><Search size={14} /><input value={linkSenseQuery} onChange={(event) => setLinkSenseQuery(event.target.value)} placeholder="Search existing senses or tags…" /></label>{matchingLinkSenses.length ? <div>{matchingLinkSenses.map((sense) => <button key={sense.wordId} onClick={() => linkWith(sense)}><strong>{sense.lemma}</strong><span>{sense.definition}</span></button>)}</div> : <small>No stored sense matches. Search WordNet below to add one.</small>}</div><div className="new-link-sense"><span>Or add a new WordNet sense</span><SenseSearch initialQuery={linkEditor.mode === 'edit' ? editingSense?.lemma ?? '' : ''} onSelect={linkWith} placeholder="Search for a new linking sense…" /></div>{linkEditor.mode === 'edit' && <button className="delete-link-button" onClick={() => deleteLink(linkEditor.edgeId)}><Trash2 size={16} /> Delete relationship</button>}</div></div>}
   </div>
 }
